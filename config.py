@@ -3,7 +3,7 @@ Configuration file for PiRacer Pro Folkrace Autonomous Vehicle.
 Contains all hardware settings, PID parameters, vision thresholds, and sensor configs.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -89,10 +89,10 @@ class SensorConfig:
 
 @dataclass
 class AppConfig:
-    camera: CameraConfig = CameraConfig()
-    vision: VisionConfig = VisionConfig()
-    control: ControlConfig = ControlConfig()
-    sensor: SensorConfig = SensorConfig()
+    camera: CameraConfig = field(default_factory=CameraConfig)
+    vision: VisionConfig = field(default_factory=VisionConfig)
+    control: ControlConfig = field(default_factory=ControlConfig)
+    sensor: SensorConfig = field(default_factory=SensorConfig)
 
     # Log level and loop target rate
     target_loop_hz: int = 30
