@@ -128,7 +128,7 @@ def test_camera():
     logging.info("--- [3/3] Testing Camera Capture ---")
     try:
         from camera import Camera
-        cam = Camera(width=640, height=360)
+        cam = Camera(width=640, height=480)
         cam.start()
         frame = cam.capture_frame()
         cam.stop()

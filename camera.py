@@ -22,7 +22,7 @@ except ImportError:
 class Camera:
     """Wrapper around Picamera2 with fallback support."""
 
-    def __init__(self, width: int = 640, height: int = 360, framerate: int = 30, format: str = "RGB888"):
+    def __init__(self, width: int = 640, height: int = 480, framerate: int = 30, format: str = "RGB888"):
         self.width = width
         self.height = height
         self.framerate = framerate
@@ -33,28 +33,30 @@ class Camera:
 
     def start(self):
         """Initialize and start the camera stream."""
+        if not PICAMERA2_AVAILABLE:
+            logging.warning("⚠️  'picamera2' module not imported. If using venv, ensure --system-site-packages was used.")
+
         if PICAMERA2_AVAILABLE:
             logging.info("Initializing Picamera2 (OV5647 compatible)...")
             try:
                 self.picam2 = Picamera2()
-                # Try preview configuration with native sensor resolution
                 try:
-                    cam_config = self.picam2.create_video_configuration(
-                        main={"size": (self.width, self.height), "format": self.format}
+                    cam_config = self.picam2.create_preview_configuration(
+                        main={"size": (self.width, self.height)}
                     )
                 except Exception:
-                    cam_config = self.picam2.create_preview_configuration(
-                        main={"size": (self.width, self.height), "format": self.format}
+                    cam_config = self.picam2.create_video_configuration(
+                        main={"size": (self.width, self.height), "format": "RGB888"}
                     )
                 self.picam2.configure(cam_config)
                 self.picam2.start()
                 # Warm up
-                time.sleep(1.0)
+                time.sleep(0.5)
                 self.is_running = True
-                logging.info(f"Picamera2 started successfully ({self.width}x{self.height} @ {self.framerate}fps)")
+                logging.info(f"✅ Picamera2 started successfully ({self.width}x{self.height} @ {self.framerate}fps)")
                 return
             except Exception as e:
-                logging.warning(f"Picamera2 failed to start ({e}). Trying VideoCapture fallback...")
+                logging.error(f"❌ Picamera2 failed to start: {e}", exc_info=True)
                 if self.picam2 is not None:
                     try:
                         self.picam2.close()
@@ -71,12 +73,12 @@ class Camera:
                     self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
                     self.cap.set(cv2.CAP_PROP_FPS, self.framerate)
                     self.is_running = True
-                    logging.info("OpenCV VideoCapture fallback started.")
+                    logging.info("✅ OpenCV VideoCapture fallback started.")
                     return
             except Exception as e:
                 logging.warning(f"OpenCV VideoCapture failed: {e}")
 
-        logging.warning("No physical camera could be opened. Running in synthetic mock frame mode.")
+        logging.warning("⚠️  No physical camera could be opened. Running in synthetic mock frame mode.")
         self.is_running = True
 
     def capture_frame(self) -> np.ndarray:
@@ -89,12 +91,16 @@ class Camera:
             raise RuntimeError("Camera is not started. Call camera.start() first.")
 
         if PICAMERA2_AVAILABLE and self.picam2 is not None:
-            # Picamera2 capture_array returns RGB or BGR based on configuration
-            frame = self.picam2.capture_array()
-            if self.format == "RGB888" and cv2 is not None:
-                # Convert RGB to BGR for standard OpenCV processing
-                return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            return frame
+            try:
+                frame = self.picam2.capture_array()
+                if frame is not None and len(frame.shape) == 3:
+                    if frame.shape[2] == 4 and cv2 is not None:
+                        return cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
+                    elif frame.shape[2] == 3 and cv2 is not None and self.format.startswith("RGB"):
+                        return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                return frame
+            except Exception as e:
+                logging.warning(f"Error capturing from Picamera2: {e}")
 
         elif self.cap is not None and self.cap.isOpened():
             ret, frame = self.cap.read()
