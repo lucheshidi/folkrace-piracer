@@ -34,32 +34,50 @@ class Camera:
     def start(self):
         """Initialize and start the camera stream."""
         if PICAMERA2_AVAILABLE:
-            logging.info("Initializing Picamera2...")
-            self.picam2 = Picamera2()
-            cam_config = self.picam2.create_preview_configuration(
-                main={"size": (self.width, self.height), "format": self.format}
-            )
-            self.picam2.configure(cam_config)
-            self.picam2.start()
-            # Warm up
-            time.sleep(1.0)
-            self.is_running = True
-            logging.info(f"Picamera2 started ({self.width}x{self.height} @ {self.framerate}fps)")
-        elif cv2 is not None:
-            logging.warning("Picamera2 not found. Trying OpenCV VideoCapture fallback (index 0)...")
-            self.cap = cv2.VideoCapture(0)
-            if self.cap.isOpened():
-                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-                self.cap.set(cv2.CAP_PROP_FPS, self.framerate)
+            logging.info("Initializing Picamera2 (OV5647 compatible)...")
+            try:
+                self.picam2 = Picamera2()
+                # Try preview configuration with native sensor resolution
+                try:
+                    cam_config = self.picam2.create_video_configuration(
+                        main={"size": (self.width, self.height), "format": self.format}
+                    )
+                except Exception:
+                    cam_config = self.picam2.create_preview_configuration(
+                        main={"size": (self.width, self.height), "format": self.format}
+                    )
+                self.picam2.configure(cam_config)
+                self.picam2.start()
+                # Warm up
+                time.sleep(1.0)
                 self.is_running = True
-                logging.info("OpenCV VideoCapture fallback started.")
-            else:
-                logging.warning("No physical camera detected. Running in mock frame mode.")
-                self.is_running = True
-        else:
-            logging.warning("Running in synthetic mock frame mode.")
-            self.is_running = True
+                logging.info(f"Picamera2 started successfully ({self.width}x{self.height} @ {self.framerate}fps)")
+                return
+            except Exception as e:
+                logging.warning(f"Picamera2 failed to start ({e}). Trying VideoCapture fallback...")
+                if self.picam2 is not None:
+                    try:
+                        self.picam2.close()
+                    except Exception:
+                        pass
+                    self.picam2 = None
+
+        if cv2 is not None:
+            logging.warning("Trying OpenCV VideoCapture fallback (index 0)...")
+            try:
+                self.cap = cv2.VideoCapture(0)
+                if self.cap.isOpened():
+                    self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+                    self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+                    self.cap.set(cv2.CAP_PROP_FPS, self.framerate)
+                    self.is_running = True
+                    logging.info("OpenCV VideoCapture fallback started.")
+                    return
+            except Exception as e:
+                logging.warning(f"OpenCV VideoCapture failed: {e}")
+
+        logging.warning("No physical camera could be opened. Running in synthetic mock frame mode.")
+        self.is_running = True
 
     def capture_frame(self) -> np.ndarray:
         """

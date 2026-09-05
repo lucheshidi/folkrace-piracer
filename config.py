@@ -9,9 +9,9 @@ from dataclasses import dataclass, field
 @dataclass
 class CameraConfig:
     # Camera resolution and framerate
-    # Lower resolution ensures higher processing FPS on Raspberry Pi
+    # OV5647 native fast binned mode is 640x480 @ ~60fps
     width: int = 640
-    height: int = 360
+    height: int = 480
     framerate: int = 30
     format: str = "RGB888"  # or 'BGR888'
 
