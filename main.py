@@ -15,6 +15,7 @@ from camera import Camera
 from vision import RoadPerception
 from controller import VehicleController
 from sensors import SensorManager
+from streamer import WebStreamer
 
 try:
     import cv2
@@ -34,7 +35,9 @@ def signal_handler(signum, frame):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Folkrace Autonomous Driving on PiRacer Pro")
-    parser.add_argument("--display", action="store_true", help="Show live OpenCV visual debug window")
+    parser.add_argument("--display", action="store_true", help="Show live OpenCV visual debug window (GUI)")
+    parser.add_argument("--stream", action="store_true", help="Enable Web MJPEG live camera stream to browser on PC")
+    parser.add_argument("--port", type=int, default=8080, help="Web stream HTTP port (default: 8080)")
     parser.add_argument("--throttle", type=float, default=None, help="Override base throttle (e.g. 0.3)")
     parser.add_argument("--mode", type=str, choices=["edge_contours", "lane_line", "color_mask"],
                         default=None, help="Road perception detection mode")
@@ -63,6 +66,11 @@ def main():
     config = AppConfig()
     if args.display:
         config.vision.show_debug_window = True
+    if args.stream:
+        config.stream.enable_stream = True
+        config.vision.show_debug_window = True  # Generate vision overlay for web stream
+    if args.port:
+        config.stream.port = args.port
     if args.throttle is not None:
         config.control.base_throttle = args.throttle
     if args.mode is not None:
@@ -76,7 +84,8 @@ def main():
     logging.info(" Starting Folkrace PiRacer Pro Autonomous System")
     logging.info(f" Mode: {config.vision.detection_mode}")
     logging.info(f" Base Throttle: {config.control.base_throttle}")
-    logging.info(f" Debug Window: {config.vision.show_debug_window}")
+    logging.info(f" Local GUI Display: {args.display}")
+    logging.info(f" Web Browser Stream: {config.stream.enable_stream} (Port: {config.stream.port})")
     logging.info(f" Sensors Enabled: {config.sensor.enable_sensors}")
     logging.info("=" * 50)
 
@@ -90,11 +99,14 @@ def main():
     perception = RoadPerception(config.vision)
     vehicle = VehicleController(config.control)
     sensors = SensorManager(config.sensor)
+    streamer = WebStreamer(host=config.stream.host, port=config.stream.port) if config.stream.enable_stream else None
 
     try:
         camera.start()
         vehicle.start()
         sensors.start()
+        if streamer is not None:
+            streamer.start()
         logging.info("All subsystems initialized. Starting main control loop...")
 
         loop_period = 1.0 / config.target_loop_hz
@@ -123,13 +135,20 @@ def main():
             else:
                 vehicle.set_drive(steering, throttle)
 
-            # 6. Debug display
-            if config.vision.show_debug_window and debug_frame is not None and cv2 is not None:
-                # Add telemetry info to debug frame
+            # 6. Compose telemetry visual frame for GUI and/or Web Stream
+            visual_output_frame = debug_frame if debug_frame is not None else frame
+            if visual_output_frame is not None and cv2 is not None:
                 telemetry = f"FPS: {current_fps:.1f} | Steer: {steering:+.2f} | Thr: {throttle:.2f}"
-                cv2.putText(debug_frame, telemetry, (20, debug_frame.shape[0] - 20),
+                cv2.putText(visual_output_frame, telemetry, (20, visual_output_frame.shape[0] - 20),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-                cv2.imshow("PiRacer Folkrace Vision", debug_frame)
+
+            # Push to Web Streamer (browser view on PC/phone)
+            if streamer is not None and visual_output_frame is not None:
+                streamer.update_frame(visual_output_frame)
+
+            # Local OpenCV GUI window display (if enabled)
+            if args.display and visual_output_frame is not None and cv2 is not None:
+                cv2.imshow("PiRacer Folkrace Vision", visual_output_frame)
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q') or key == 27:  # 'q' or ESC
                     logging.info("Exit requested via GUI key press.")
@@ -159,6 +178,8 @@ def main():
         vehicle.stop()
         camera.stop()
         sensors.cleanup()
+        if streamer is not None:
+            streamer.stop()
         if cv2 is not None:
             cv2.destroyAllWindows()
         logging.info("System terminated safely.")

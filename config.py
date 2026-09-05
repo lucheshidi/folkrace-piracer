@@ -94,11 +94,21 @@ class SensorConfig:
 
 
 @dataclass
+class StreamConfig:
+    # Web MJPEG Video Streamer settings (for viewing live camera feed in browser on PC)
+    enable_stream: bool = False
+    host: str = "0.0.0.0"
+    port: int = 8080
+    jpeg_quality: int = 70
+
+
+@dataclass
 class AppConfig:
     camera: CameraConfig = field(default_factory=CameraConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
     control: ControlConfig = field(default_factory=ControlConfig)
     sensor: SensorConfig = field(default_factory=SensorConfig)
+    stream: StreamConfig = field(default_factory=StreamConfig)
 
     # Log level and loop target rate
     target_loop_hz: int = 30

@@ -54,22 +54,34 @@ python3 test_hardware.py
 
 ## 🎮 运行方式
 
-### 1. 比赛实车运行（极速无界面模式，高帧率）
+### 1. 局域网 Web 实时投屏模式（推荐：在电脑/手机浏览器中直接查看画面）
+在树莓派上启动推流：
+```bash
+python3 main.py --stream
+```
+然后在电脑或手机浏览器（与树莓派处于同一 Wi-Fi）中打开：
+```text
+http://<树莓派IP>:8080
+```
+> 页面将实时显示小车摄像头前视画面、赛道中线识别轨迹以及实时遥测数据（FPS、实时转向角 Steer、实时油门 Thr）。
+> 可自定义端口：`python3 main.py --stream --port 8080 --throttle 0.32`
+
+### 2. 比赛实车运行（极速无界面模式，最高帧率）
 ```bash
 python3 main.py --throttle 0.32
 ```
 
-### 2. 赛道校准与调试模式（开启 OpenCV 图像显示）
+### 3. 本地桌面 GUI 调试模式（需接 HDMI 屏幕或 X11 转发）
 ```bash
 python3 main.py --display
 ```
 
-### 3. 启用两侧超声波/红外传感器避障
+### 4. 启用两侧超声波/红外传感器避障
 ```bash
-python3 main.py --enable-sensors
+python3 main.py --stream --enable-sensors
 ```
 
-### 4. 切换赛道感知模式
+### 5. 切换赛道感知模式
 - `edge_contours`（默认，双侧赛道边墙/边界检测与自适应走廊中线追踪）
 - `lane_line`（明亮引导线/白线模式，支持 HSV 与自适应高光分割）
 - `color_mask`（暗色赛道/深色沥青模式）
