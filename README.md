@@ -22,15 +22,33 @@
 ```bash
 # 1. 更新系统并安装系统级依赖
 sudo apt update
-sudo apt install -y python3-pip python3-opencv python3-numpy python3-rpi.gpio
+sudo apt install -y python3-pip python3-opencv python3-numpy python3-rpi.gpio python3-smbus
 
 # 2. 安装 Picamera2（通常 Bookworm 镜像已预装）
 sudo apt install -y python3-picamera2
 
-# 3. 安装 PiRacer Pro 官方驱动库
-# 若未安装，可从 Waveshare 官方提供的源安装：
+# 3. 安装底盘与舵机驱动库（二选一或均安装，程序自动识别）
 pip3 install piracer-py
+# 或者使用 Adafruit ServoKit 驱动 PCA9685
+pip3 install adafruit-circuitpython-servokit
 ```
+
+---
+
+## 🔧 硬件独立自检与诊断 (重要)
+
+在正式开始自主巡线前，请先运行硬件自检脚本（**注意：测试前请将小车车轮悬空架起，防止飞车**）：
+
+```bash
+python3 test_hardware.py
+```
+
+该脚本将依次测试：
+1. **I2C 总线与 PCA9685 芯片通信 (0x40)**
+2. **ESC 电调中位自检解锁序列 (1.5s)**
+3. **转向舵机摆动 (居中 -> 左转 -> 居中 -> 右转 -> 居中)**
+4. **后驱电机旋转 (前进 0.28 -> 刹车 -> 后退 -0.25 -> 停止)**
+5. **Picamera2 摄像头图像采集**
 
 ---
 
@@ -38,7 +56,7 @@ pip3 install piracer-py
 
 ### 1. 比赛实车运行（极速无界面模式，高帧率）
 ```bash
-python3 main.py --throttle 0.3
+python3 main.py --throttle 0.32
 ```
 
 ### 2. 赛道校准与调试模式（开启 OpenCV 图像显示）
@@ -52,8 +70,8 @@ python3 main.py --enable-sensors
 ```
 
 ### 4. 切换赛道感知模式
-- `edge_contours`（默认，灰度自适应与边缘检测，适合有边墙/赛道边界对比明显的场地）
-- `lane_line`（明亮引导线/白线模式）
+- `edge_contours`（默认，双侧赛道边墙/边界检测与自适应走廊中线追踪）
+- `lane_line`（明亮引导线/白线模式，支持 HSV 与自适应高光分割）
 - `color_mask`（暗色赛道/深色沥青模式）
 
 ```bash

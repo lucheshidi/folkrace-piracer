@@ -55,16 +55,22 @@ class ControlConfig:
     # Steering limits [-1.0, 1.0]
     max_steering: float = 1.0
     min_steering: float = -1.0
-    steering_trim: float = 0.0  # Hardware zero-point calibration trim
+    steering_trim: float = 0.0       # Hardware zero-point calibration trim
+    invert_steering: bool = False    # Invert steering direction if servo turns opposite
 
     # Throttle / Speed settings
-    base_throttle: float = 0.28   # Cruising speed (0.0 to 1.0)
-    max_throttle: float = 0.45    # Straight line boost
-    min_throttle: float = 0.18    # Cornering speed
-    reverse_throttle: float = -0.25 # Reverse speed for unstuck
+    base_throttle: float = 0.30      # Cruising speed (0.0 to 1.0)
+    max_throttle: float = 0.50       # Straight line boost
+    min_throttle: float = 0.22       # Minimum forward throttle during corners
+    throttle_deadband: float = 0.18  # Minimum ESC throttle to overcome motor static friction
+    reverse_throttle: float = -0.25  # Reverse speed for unstuck
+    invert_throttle: bool = False    # Invert throttle direction
 
     # Dynamic speed scaling: reduce speed when steering angle is large
-    turn_slowdown_factor: float = 0.5
+    turn_slowdown_factor: float = 0.4
+    
+    # ESC arming delay (in seconds) on startup
+    esc_arm_time: float = 1.5
 
 
 @dataclass
