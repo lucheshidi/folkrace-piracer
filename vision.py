@@ -46,8 +46,13 @@ class RoadPerception:
         blurred = cv2.GaussianBlur(roi, (5, 5), 0)
         gray = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
 
-        # 2. Extract edge map using Canny
-        edges = cv2.Canny(gray, self.config.canny_threshold1, self.config.canny_threshold2)
+        # 2. Extract edge map using Canny (Adaptive gradient for dark track / dark wall)
+        v = np.median(gray)
+        auto_canny_low = int(max(20, 0.66 * v))
+        auto_canny_high = int(min(220, 1.33 * v))
+        canny_low = min(self.config.canny_threshold1, auto_canny_low)
+        canny_high = max(self.config.canny_threshold2, auto_canny_high)
+        edges = cv2.Canny(gray, canny_low, canny_high)
 
         # 3. Extract mask based on detection mode
         if self.config.detection_mode == "lane_line":
