@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Main entry point for PiRacer Pro Folkrace Autonomous Vehicle.
 Integrates OpenCV vision, Picamera2 capture, PID motion control, and sensor avoidance.
