@@ -1,3 +1,5 @@
 numpy==2.4.6
 opencv-contrib-python==5.0.0.93
 opencv-python==5.0.0.93
+picamera2
+adafruit-circuitpython-servokit
