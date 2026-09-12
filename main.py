@@ -121,6 +121,8 @@ def main():
             # 1. Capture camera frame
             frame = camera.capture_frame()
 
+            frame = numpy.rot90(frame, 2, (1, 0))
+
             # 2. Vision perception: process road condition & calculate steering offset
             error, detected, debug_frame = perception.process_frame(frame)
 
