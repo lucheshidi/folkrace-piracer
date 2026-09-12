@@ -1,0 +1,12 @@
+.idea/
+__pycache__/
+.env
+.env.example
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+.tox/
+.pytest_cache/
+.pytest_cache
