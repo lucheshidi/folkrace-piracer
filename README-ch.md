@@ -1,3 +1,5 @@
+[English](README.md) | **简体中文**
+
 # WaveShare PiRacer Pro - Chalmers Folkrace 自动驾驶控制程序
 
 本项目是一个专为 **WaveShare PiRacer Pro AI 套件** 设计的自主循线与道路感知控制系统，用于参加 **Chalmers 机器人 Folkrace 竞赛**。系统基于 **OpenCV2**、**NumPy**、**Picamera2** 和 **PiRacerPro** 硬件驱动，并预留了**侧面红外测距/超声波避障传感器**的扩展接口。
