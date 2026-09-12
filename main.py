@@ -7,6 +7,7 @@ Integrates OpenCV vision, Picamera2 capture, PID motion control, and sensor avoi
 import argparse
 import logging
 import signal
+import numpy
 import sys
 
 import time
