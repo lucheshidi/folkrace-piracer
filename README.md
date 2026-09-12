@@ -112,3 +112,4 @@ Quick adjustments for specific venues in `config.py`:
 
 # Contributors
 - Pengpung
+- Duckystew
