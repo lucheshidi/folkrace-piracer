@@ -109,3 +109,6 @@ Quick adjustments for specific venues in `config.py`:
    - Ultrasonic left default pins: TRIG `GPIO 23`, ECHO `GPIO 24`
    - Ultrasonic right default pins: TRIG `GPIO 27`, ECHO `GPIO 22`
    - Infrared sensor default pins: left `GPIO 17`, right `GPIO 18`
+
+# Contributors
+- Pengpung
