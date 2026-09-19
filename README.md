@@ -85,7 +85,7 @@ python3 main.py --stream --enable-sensors
 
 ### 5. Switch Track Perception Mode
 - `edge_contours` (default, dual-side track wall/boundary detection and adaptive corridor centerline tracking)
-- `lane_line` (bright guide line/white line mode, supports HSV and adaptive highlight segmentation)
+- `lane_line` (bright guideline/white line mode, supports HSV and adaptive highlight segmentation)
 - `color_mask` (dark track/dark asphalt mode)
 
 ```bash
