@@ -5,6 +5,8 @@ and fallback to OpenCV VideoCapture or synthetic frames for local testing.
 
 import logging
 import time
+
+import numpy
 import numpy as np
 
 try:
@@ -93,6 +95,7 @@ class Camera:
         if PICAMERA2_AVAILABLE and self.picam2 is not None:
             try:
                 frame = self.picam2.capture_array()
+                frame = numpy.rot90(frame, 2, (1, 0))
                 if frame is not None and len(frame.shape) == 3:
                     if frame.shape[2] == 4 and cv2 is not None:
                         return cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
