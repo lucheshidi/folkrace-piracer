@@ -27,38 +27,48 @@ except ImportError:
 
 
 class PIDController:
-    """PID Controller for steering regulation."""
+    """
+    PID Controller for steering regulation.
 
-    def __init__(self, kp: float, ki: float, kd: float):
-        self.kp = kp
-        self.ki = ki
-        self.kd = kd
+    Gains are read live from the shared ControlConfig on every compute() call so
+    the web tuning tab can change them while the car is driving. Do not cache them
+    in instance attributes -- doing so is exactly what made live tuning silently
+    ineffective.
+
+    Timing uses time.monotonic(): the Pi has no RTC, and an NTP correction during
+    a run would otherwise produce a huge dt spike in the derivative term.
+    """
+
+    def __init__(self, config: ControlConfig):
+        self.config = config
         self.prev_error = 0.0
         self.integral = 0.0
-        self.last_time = time.time()
+        self.last_time = time.monotonic()
 
     def reset(self):
         self.prev_error = 0.0
         self.integral = 0.0
-        self.last_time = time.time()
+        self.last_time = time.monotonic()
 
     def compute(self, error: float) -> float:
         """Compute PID output steering command given target error [-1.0, 1.0]."""
-        current_time = time.time()
+        kp, ki, kd = self.config.kp, self.config.ki, self.config.kd
+
+        current_time = time.monotonic()
         dt = current_time - self.last_time
         if dt <= 0.0:
             dt = 1e-3
 
         # Proportional term
-        p_term = self.kp * error
+        p_term = kp * error
 
         # Integral term with anti-windup clamping
         self.integral += error * dt
         self.integral = float(np.clip(self.integral, -1.0, 1.0))
-        i_term = self.ki * self.integral
+        i_term = ki * self.integral
 
         # Derivative term
-        d_term = self.kd * ((error - self.prev_error) / dt)
+        d_term = kd * ((error - self.prev_error) / dt)
 
         # Output calculation
         output = p_term + i_term + d_term
@@ -74,12 +84,16 @@ class VehicleController:
 
     def __init__(self, config: ControlConfig):
         self.config = config
-        self.pid = PIDController(config.kp, config.ki, config.kd)
+        self.pid = PIDController(config)
         self.backend_type: str = "simulation"
         self.piracer = None
         self.servokit = None
         self.current_steering = 0.0
         self.current_throttle = 0.0
+
+    def reset_pid(self):
+        """Clear PID integrator and derivative history (used on driving-mode transitions)."""
+        self.pid.reset()
 
     def start(self):
         """Initialize PiRacer Pro hardware backend and arm ESC."""
@@ -197,6 +211,7 @@ class VehicleController:
 
     def stop(self):
         """Emergency stop: reset steering and kill throttle."""
+        was_moving = (self.current_throttle != 0.0) or (self.current_steering != 0.0)
         self.current_steering = 0.0
         self.current_throttle = 0.0
 
@@ -216,4 +231,7 @@ class VehicleController:
             except Exception as e:
                 logging.error(f"Error during ServoKit stop: {e}")
 
-        logging.info("Vehicle stopped safely.")
+        # Edge-triggered: the main loop may call stop() every frame while an
+        # obstacle holds the emergency condition, which would otherwise flood the log.
+        if was_moving:
+            logging.info("Vehicle stopped safely.")

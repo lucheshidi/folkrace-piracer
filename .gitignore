@@ -16,3 +16,12 @@ venv/
 
 FolkRace.iml
 FolkRace.ipr
+
+# --- AI assistant tooling: local only, never commit ---
+# CLAUDE.md is Claude Code's local instruction file; .claude/ holds its settings,
+# custom commands and agents. Transcripts and memory live in ~/.claude/ -- outside
+# this repository entirely -- so git can never reach them.
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+.mcp.json
