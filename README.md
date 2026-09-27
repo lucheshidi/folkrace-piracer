@@ -14,6 +14,9 @@ This project is an autonomous line-following and road perception control system 
 - **`controller.py`**: PID steering controller and PiRacerPro chassis control wrapper (supports corner adaptive deceleration, out-of-focus deceleration line tracking, and emergency power cutoff protection).
 - **`sensors.py`**: Left and right side ultrasonic (HC-SR04) and infrared obstacle avoidance sensor management module (wall-hugging thrust correction and emergency braking).
 - **`main.py`**: System main control loop entry (supports frame rate control, keyboard/system signal safe interrupt exit, and debug window visualization).
+- **`streamer.py`**: Standard-library MJPEG web streamer, plus the HTTP control API for the debug console (no extra pip dependencies).
+- **`webcontrol.py`**: Remote debug state machine and the tunable-parameter whitelist. Thread-safe, touches no hardware, and is the single authority on permissions and value validation.
+- **`webui.py`**: The debug console page (HTML/CSS/JS). Renders only the tabs that the launch flags permit.
 
 ---
 
@@ -51,6 +54,9 @@ This script will sequentially test:
 3. **Steering servo sweep (center -> left turn -> center -> right turn -> center)**
 4. **Rear drive motor rotation (forward 0.28 -> brake -> reverse -0.25 -> stop)**
 5. **Picamera2 camera image capture**
+
+> The full deployment, bench-test, permission-gate and pre-race checklist is in
+> **[MANUAL-CHECKS-en.md](MANUAL-CHECKS-en.md)** (every item needs a human).
 
 ---
 
@@ -92,6 +98,62 @@ python3 main.py --stream --enable-sensors
 python3 main.py --mode lane_line --throttle 0.35
 ```
 
+### 6. Web Debug Console — Live Tuning and Manual Drive (Testing Only)
+
+Both control tabs are opt-in from the terminal. Anyone on the same LAN can open the
+page, so what appears in the browser is decided by the command that started the
+program on the Raspberry Pi — opening the page is never enough to take control.
+
+| Command | Page shows | Car does |
+|---|---|---|
+| `python3 main.py --stream` | Camera feed only | Autonomous line following (unchanged) |
+| `python3 main.py --stream --allow-tuning` | Camera feed + **Tuning** tab | Autonomous; parameters change live |
+| `python3 main.py --stream --allow-manual` | Camera feed + **Tuning** + **Manual Drive** | Starts **PAUSED** and waits for an operator |
+
+`--allow-manual` implies `--allow-tuning`.
+
+**Manual drive flow**
+
+```text
+start ──► PAUSED (car held)
+   ├─ hold ARM for 2 s ──► MANUAL (deadman: stops if commands stop arriving)
+   │     └─ STOP ──► PAUSED
+   └─ START AUTONOMOUS ──► AUTO
+         └─ STOP ──► PAUSED
+```
+
+After a stop you can hold ARM again to go back to manual; no restart needed.
+Press `Ctrl-C` in the terminal to quit.
+
+**Safety properties**
+
+- **Armed is not moving.** Arming enters MANUAL at zero throttle and the car stays
+  still until a drive command actually arrives.
+- **Deadman.** If no command arrives for 0.8 s, the car is commanded to a full stop.
+  It stays in MANUAL and never resumes autonomous driving on its own.
+- **Server-side clamping.** Operator input is clamped to `RemoteConfig.max_manual_throttle`
+  (0.40), deliberately below the autonomous `max_throttle` (0.50): manual driving can
+  never outrun autonomous driving.
+- **The emergency brake always applies.** In manual mode the side-wall steering
+  correction is disabled — the operator is the steering authority — but a proximity
+  emergency stop still overrides every mode.
+- **The video overlay states the mode.** Anything other than autonomous draws a
+  banner across the top of the stream: `MANUAL CONTROL - NOT AUTONOMOUS`, `PAUSED`,
+  or `DEADMAN - COMMANDS LOST`. An autonomous run draws nothing.
+- **A closed page stops the car.** Switching away from the tab zeroes both axes, and
+  closing the page sends a stop. It never hands the car back to autonomous control.
+- **Cross-origin requests cannot reach the API.** Drive commands must be POSTed as
+  `application/json`, which forces a CORS preflight that this server never answers.
+  Do not add CORS headers to it.
+
+**Deliberately not exposed for tuning:** `invert_steering`, `invert_throttle`,
+`show_debug_window`, `esc_arm_time`, and every `SensorConfig` threshold. Flipping an
+invert flag while driving means full opposite lock or full reverse, and the sensor
+thresholds *are* the collision-avoidance layer.
+
+**A competition run uses none of these flags.** `python3 main.py --throttle 0.32` is
+the race command, and it behaves exactly as it did before this feature existed.
+
 ---
 
 ## 🛠 Tuning Guide (For Chalmers Folkrace Track)
@@ -111,6 +173,19 @@ Quick adjustments for specific venues in `config.py`:
    - Ultrasonic left default pins: TRIG `GPIO 23`, ECHO `GPIO 24`
    - Ultrasonic right default pins: TRIG `GPIO 27`, ECHO `GPIO 22`
    - Infrared sensor default pins: left `GPIO 17`, right `GPIO 18`
+5. **Live Tuning from the Browser** (`--allow-tuning`):
+   The **Tuning** tab edits the same values as `config.py`, applied immediately — the
+   car keeps following the line while you change them. This is the fastest way to find
+   PID gains on the actual track instead of guessing in the pits; the telemetry strip
+   above the video shows the effect of each change right away.
+   - Values are validated on the server, so a slider can never leave the car in a state
+     it cannot drive out of. Out-of-range values are refused, and an inverted ROI (top
+     below bottom, which would crop the image to nothing and send the car straight on
+     with no steering correction) is rejected as a whole batch.
+   - **Reset PID State** clears the integrator and derivative history after a big gain
+     change, so old accumulated error does not carry over.
+   - **Copy as config.py** copies the current values so you can paste them back into
+     `config.py`. Tuning lives in memory only and is lost when the program exits.
 
 # Contributors
 - Pengpung

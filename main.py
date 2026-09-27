@@ -7,9 +7,7 @@ Integrates OpenCV vision, Picamera2 capture, PID motion control, and sensor avoi
 import argparse
 import logging
 import signal
-import numpy
 import sys
-
 import time
 
 from config import AppConfig
@@ -18,6 +16,7 @@ from vision import RoadPerception
 from controller import VehicleController
 from sensors import SensorManager
 from streamer import WebStreamer
+from webcontrol import RemoteState, SOURCE_AUTO, SOURCE_MANUAL, SOURCE_PAUSED
 
 try:
     import cv2
@@ -35,6 +34,51 @@ def signal_handler(signum, frame):
     running = False
 
 
+def resolve_drive(remote: RemoteState, vehicle: VehicleController,
+                  auto_steering: float, auto_throttle: float):
+    """
+    Pick the drive command for this frame.
+
+    Priority: autonomous PID -> operator command -> deadman (0,0) -> paused (0,0).
+    The last two are the safety net around an operator who stopped sending.
+    """
+    command = remote.resolve(time.monotonic())
+
+    # A transition between driving modes must not inherit the integrator and
+    # derivative history of the previous one.
+    if remote.consume_pid_reset():
+        vehicle.reset_pid()
+
+    if command is None:
+        return auto_steering, auto_throttle, SOURCE_AUTO
+    return command.steering, command.throttle, command.source
+
+
+def draw_mode_banner(frame, source: str):
+    """
+    Stamp the driving mode across the top of the video frame.
+
+    The stream is where people actually look during a run, so an overlay is the
+    most reliable way to make "this car is not driving itself" impossible to miss.
+    Autonomous driving draws nothing, keeping a race-day feed clean.
+    """
+    if source == SOURCE_AUTO:
+        return
+
+    if source == SOURCE_MANUAL:
+        text, colour = "MANUAL CONTROL - NOT AUTONOMOUS", (0, 0, 220)
+    elif source == SOURCE_PAUSED:
+        text, colour = "PAUSED - CAR HELD", (0, 140, 255)
+    else:
+        text, colour = "DEADMAN - COMMANDS LOST", (0, 0, 220)
+
+    width = frame.shape[1]
+    cv2.rectangle(frame, (0, 0), (width, 46), colour, -1)
+    (text_width, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+    cv2.putText(frame, text, (max(0, (width - text_width) // 2), 32),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Folkrace Autonomous Driving on PiRacer Pro")
     parser.add_argument("--display", action="store_true", help="Show live OpenCV visual debug window (GUI)")
@@ -45,6 +89,12 @@ def parse_args() -> argparse.Namespace:
                         default=None, help="Road perception detection mode")
     parser.add_argument("--enable-sensors", action="store_true", help="Enable ultrasonic/IR side sensors")
     parser.add_argument("--fps", type=int, default=30, help="Target loop frequency in Hz")
+    # Debug tooling. Neither flag belongs in a competition command line: with them
+    # absent the web page is a plain video feed and the car behaves exactly as before.
+    parser.add_argument("--allow-tuning", action="store_true",
+                        help="Show the live parameter tuning tab on the web page (debug only)")
+    parser.add_argument("--allow-manual", action="store_true",
+                        help="Show the manual drive tab on the web page (test only; implies --allow-tuning)")
     return parser.parse_args()
 
 
@@ -81,6 +131,11 @@ def main():
         config.sensor.enable_sensors = True
     if args.fps is not None:
         config.target_loop_hz = args.fps
+    if args.allow_manual:
+        config.remote.allow_manual = True
+        config.remote.allow_tuning = True   # driving by hand and tuning go together
+    elif args.allow_tuning:
+        config.remote.allow_tuning = True
 
     logging.info("=" * 50)
     logging.info(" Starting Folkrace PiRacer Pro Autonomous System")
@@ -89,7 +144,15 @@ def main():
     logging.info(f" Local GUI Display: {args.display}")
     logging.info(f" Web Browser Stream: {config.stream.enable_stream} (Port: {config.stream.port})")
     logging.info(f" Sensors Enabled: {config.sensor.enable_sensors}")
+    logging.info(f" Web Live Tuning: {config.remote.allow_tuning} | Web Manual Control: {config.remote.allow_manual}")
     logging.info("=" * 50)
+
+    if config.remote.allow_manual:
+        logging.warning("=" * 50)
+        logging.warning(" MANUAL CONTROL ENABLED - TESTING ONLY")
+        logging.warning(" The car starts PAUSED and waits for someone to hold ARM.")
+        logging.warning(" A competition run must use neither --allow-manual nor --allow-tuning.")
+        logging.warning("=" * 50)
 
     # Initialize subsystems
     camera = Camera(
@@ -101,7 +164,15 @@ def main():
     perception = RoadPerception(config.vision)
     vehicle = VehicleController(config.control)
     sensors = SensorManager(config.sensor)
-    streamer = WebStreamer(host=config.stream.host, port=config.stream.port) if config.stream.enable_stream else None
+    # Always constructed: without a streamer it is inert (resolve() returns None on
+    # every frame), so the main loop never needs an "if remote is not None" branch.
+    remote = RemoteState(config, config.remote)
+    streamer = WebStreamer(
+        host=config.stream.host,
+        port=config.stream.port,
+        jpeg_quality=config.stream.jpeg_quality,
+        remote=remote,
+    ) if config.stream.enable_stream else None
 
     try:
         camera.start()
@@ -116,56 +187,94 @@ def main():
         fps_start_time = time.time()
         current_fps = 0.0
 
+        max_frame_errors = config.max_consecutive_frame_errors
+        consecutive_errors = 0
+
         while running:
             loop_start = time.time()
 
-            # 1. Capture camera frame
-            frame = camera.capture_frame()
+            try:
+                # 1. Capture camera frame
+                frame = camera.capture_frame()
 
-            # 2. Vision perception: process road condition & calculate steering offset
-            error, detected, debug_frame = perception.process_frame(frame)
+                # 2. Vision perception: process road condition & calculate steering offset
+                error, detected, debug_frame = perception.process_frame(frame)
 
-            # 3. Motion control calculation (PID + dynamic speed scaling)
-            steering, throttle = vehicle.compute_control(error, detected)
+                # 3. Motion control calculation (PID + dynamic speed scaling).
+                #    Computed on every frame even when a remote mode is in charge:
+                #    a stale dt would fire a derivative spike on the switch back,
+                #    and the tuning page wants the numbers. Nothing is actuated
+                #    from it while a remote mode owns the car.
+                auto_steering, auto_throttle = vehicle.compute_control(error, detected)
 
-            # 4. Sensor override (side proximity & obstacle avoidance)
-            steering, throttle, is_emergency = sensors.get_obstacle_override(steering, throttle)
+                # 4. Remote override (operator command, deadman hold, or paused)
+                steering, throttle, drive_source = resolve_drive(
+                    remote, vehicle, auto_steering, auto_throttle
+                )
 
-            # 5. Apply actuator commands
-            if is_emergency:
-                vehicle.stop()
-            else:
-                vehicle.set_drive(steering, throttle)
+                # 5. Sensor override (side proximity & obstacle avoidance). The
+                #    side-wall steering bias applies only while the car steers
+                #    itself -- under manual control the operator is the steering
+                #    authority. The emergency brake keeps the last word either way.
+                steering, throttle, is_emergency = sensors.get_obstacle_override(
+                    steering, throttle, apply_steering_bias=(drive_source == SOURCE_AUTO)
+                )
 
-            # 6. Compose telemetry visual frame for GUI and/or Web Stream
-            visual_output_frame = debug_frame if debug_frame is not None else frame
-            if visual_output_frame is not None and cv2 is not None:
-                telemetry = f"FPS: {current_fps:.1f} | Steer: {steering:+.2f} | Thr: {throttle:.2f}"
-                cv2.putText(visual_output_frame, telemetry, (20, visual_output_frame.shape[0] - 20),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                # 6. Apply actuator commands
+                if is_emergency:
+                    vehicle.stop()
+                else:
+                    vehicle.set_drive(steering, throttle)
 
-            # Push to Web Streamer (browser view on PC/phone)
-            if streamer is not None and visual_output_frame is not None:
-                streamer.update_frame(visual_output_frame)
+                # 7. Publish telemetry to the web console
+                remote.publish_telemetry({
+                    "fps": round(current_fps, 1),
+                    "steering": round(steering, 3),
+                    "throttle": round(throttle, 3),
+                    "detected": bool(detected),
+                    "source": drive_source,
+                })
 
-            # Local OpenCV GUI window display (if enabled)
-            if args.display and visual_output_frame is not None and cv2 is not None:
-                cv2.imshow("PiRacer Folkrace Vision", visual_output_frame)
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q') or key == 27:  # 'q' or ESC
-                    logging.info("Exit requested via GUI key press.")
+                # 8. Compose telemetry visual frame for GUI and/or Web Stream
+                visual_output_frame = debug_frame if debug_frame is not None else frame
+                if visual_output_frame is not None and cv2 is not None:
+                    telemetry = f"FPS: {current_fps:.1f} | Steer: {steering:+.2f} | Thr: {throttle:.2f}"
+                    cv2.putText(visual_output_frame, telemetry, (20, visual_output_frame.shape[0] - 20),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                    draw_mode_banner(visual_output_frame, drive_source)
+
+                # Push to Web Streamer (browser view on PC/phone)
+                if streamer is not None and visual_output_frame is not None:
+                    streamer.update_frame(visual_output_frame)
+
+                # Local OpenCV GUI window display (if enabled)
+                if args.display and visual_output_frame is not None and cv2 is not None:
+                    cv2.imshow("PiRacer Folkrace Vision", visual_output_frame)
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('q') or key == 27:  # 'q' or ESC
+                        logging.info("Exit requested via GUI key press.")
+                        break
+
+                # FPS calculation (only counts fully processed frames)
+                frame_count += 1
+                elapsed_fps = time.time() - fps_start_time
+                if elapsed_fps >= 1.0:
+                    current_fps = frame_count / elapsed_fps
+                    frame_count = 0
+                    fps_start_time = time.time()
+                    logging.info(f"Running @ {current_fps:.1f} FPS | Steer: {steering:+.2f} | Throttle: {throttle:.2f}")
+
+            except Exception as e:
+                # A single dropped frame must not end the run — only sustained failure should.
+                consecutive_errors += 1
+                logging.error(f"Frame processing error ({consecutive_errors}/{max_frame_errors}): {e}", exc_info=True)
+                if consecutive_errors >= max_frame_errors:
+                    logging.error("Persistent frame errors detected. Stopping vehicle for safety.")
                     break
+            else:
+                consecutive_errors = 0
 
-            # FPS calculation
-            frame_count += 1
-            elapsed_fps = time.time() - fps_start_time
-            if elapsed_fps >= 1.0:
-                current_fps = frame_count / elapsed_fps
-                frame_count = 0
-                fps_start_time = time.time()
-                logging.info(f"Running @ {current_fps:.1f} FPS | Steer: {steering:+.2f} | Throttle: {throttle:.2f}")
-
-            # Sleep to maintain target loop frequency
+            # Sleep to maintain target loop frequency (also throttles the error path)
             process_duration = time.time() - loop_start
             sleep_time = loop_period - process_duration
             if sleep_time > 0:
