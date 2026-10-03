@@ -105,6 +105,15 @@ class StreamConfig:
     host: str = "0.0.0.0"
     port: int = 8080
     jpeg_quality: int = 70
+    # Frames per second pushed to the browsers.
+    #
+    # The control loop produces ~30 fps and hands every frame over. At quality 70
+    # that is roughly 10-15 Mbit/s of JPEG, which is the video stream's share of a
+    # link the operator is also driving the car over -- and a drive command that
+    # arrives later than RemoteConfig.deadman_timeout_s stops the car. Halving the
+    # rate roughly halves that share and 15 fps is still a perfectly usable view.
+    # Raise it only if the car is on a wired or otherwise quiet network.
+    fps: int = 15
 
 
 @dataclass
@@ -125,6 +134,9 @@ class RemoteConfig:
 
     # Deadman: if no drive command arrives within this window while armed, the car
     # is commanded to a full stop. Mandatory safety net -- do not disable.
+    # Keep it above webui.SEND_TIMEOUT_MS (600 ms): the page abandons a drive request
+    # after that long and sends a fresh one, and a window shorter than one retry would
+    # stop the car on a link that is merely slow rather than actually gone.
     deadman_timeout_s: float = 0.8
 
     # Hard limits applied to operator input (server side, defence in depth).

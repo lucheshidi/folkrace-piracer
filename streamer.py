@@ -207,10 +207,13 @@ class WebStreamer:
     """Manager for Web MJPEG live camera stream and the optional control API."""
 
     def __init__(self, host: str = "0.0.0.0", port: int = 8080, jpeg_quality: int = 70,
-                 remote: Optional[RemoteState] = None):
+                 fps: int = 15, remote: Optional[RemoteState] = None):
         self.host = host
         self.port = port
         self.jpeg_quality = jpeg_quality
+        self.fps = max(1, min(60, int(fps)))
+        self._min_frame_interval = 1.0 / self.fps
+        self._last_frame_ts: Optional[float] = None
         self.remote = remote
         self.output = StreamingOutput()
         self.server: Optional[ThreadedHTTPServer] = None
@@ -241,9 +244,18 @@ class WebStreamer:
     def update_frame(self, frame: np.ndarray):
         """
         Encode an OpenCV BGR frame into JPEG and push to connected clients.
+
+        Rate-limited here rather than in the control loop: the loop has real work
+        to do at its full rate, and it is only the encoding and the network push
+        that need to come down. See StreamConfig.fps for why they do.
         """
         if not self.is_running or frame is None or frame.size == 0:
             return
+
+        now = time.monotonic()
+        if self._last_frame_ts is not None and (now - self._last_frame_ts) < self._min_frame_interval:
+            return
+        self._last_frame_ts = now
 
         try:
             if cv2 is not None:
