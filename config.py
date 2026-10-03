@@ -12,7 +12,7 @@ class CameraConfig:
     # OV5647 native fast binned mode is 640x480 @ ~60fps
     width: int = 640
     height: int = 460
-    framerate: int = 45
+    framerate: int = 30
     format: str = "RGB888"  # or 'BGR888'
 
 
