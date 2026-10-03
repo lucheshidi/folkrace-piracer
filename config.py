@@ -58,6 +58,7 @@ class ControlConfig:
     turn_slowdown_factor = 0.06
     reverse_throttle = -0.25
     steering_trim = 0
+    esc_arm_time = 1.0
 
     # vision
     roi_top_ratio = 0.45
