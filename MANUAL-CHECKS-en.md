@@ -30,16 +30,19 @@ Confirm each of these:
 - [ ] Hold ARM for the full 2 s (the progress bar fills) → enters MANUAL and the banner turns red `MANUAL CONTROL - NOT AUTONOMOUS`
 - [ ] During a hold, slide the finger off the button → must cancel, no MANUAL
 - [ ] Once in MANUAL, **press nothing** and wait 3 s → the wheels do not move at all (armed is not moving)
-- [ ] Hold the throttle button → wheels turn; release → immediate stop
-- [ ] Press LEFT / RIGHT → **confirm the direction matches the video**. If it is reversed, change `invert_steering` in `config.py` (it is deliberately not exposed in the web UI)
+- [ ] Hold the ▲ throttle button → wheels **ramp up** (about 0.45 s to the top); release → back to zero in about 0.2 s
+- [ ] Press ◀ / ▶ to steer → **confirm the direction matches the video**. If it is reversed, change `invert_steering` in `config.py` (it is deliberately not exposed in the web UI); releasing should let the needle walk back to centre
+- [ ] The gauges at the bottom of the picture follow along: the steering dot tracks ◀ ▶, the throttle bar tracks ▲ ▼ (green forward, amber reverse)
 - [ ] Keyboard: `W` `S` `A` `D`, `Space` to stop, hold `M` for 2 s to ARM
+- [ ] **Alt-Tab away while holding `W`** → wheels stop at once; after switching back, pressing a key again must work normally (the held keys have to be cleared, or that key stays stuck down)
+- [ ] The `EN` / `中文` buttons in the top right switch language → the **video must not flicker or reconnect**, and the parameter names and notes in the Tuning tab must change with it; reload → the choice stuck (a switch that reloads the page would trip the deadman mid-drive)
 - [ ] **Deadman A**: while holding the throttle, **close the browser tab outright** → wheels stop within 0.8 s
 - [ ] **Deadman B**: while holding the throttle, unplug the network cable or turn off Wi-Fi → wheels stop within 0.8 s, the banner becomes `DEADMAN - COMMANDS LOST`, and the mode **stays MANUAL** (it never falls back to autonomous)
 - [ ] After the network returns, press `START AUTONOMOUS` → back to AUTO and the banner disappears
 - [ ] **Tuning actually applies (critical)**: in the Tuning tab, drag `Kp` from 0.65 to 0.05 → the `Steer` amplitude on the telemetry strip must shrink **immediately**. This is the on-car check for the PID gain value-copy trap; if nothing changes, live tuning is not reaching the controller at all
 - [ ] Drag `ROI top` to its maximum of 0.90 → it conflicts with `ROI bottom` 0.95, so the whole batch must be refused and the slider snapped back
 - [ ] `Reset PID State` gives feedback; `Copy as config.py` copies pasteable text
-- [ ] Open the page on a **phone** and work through the steering and throttle buttons — releasing must stop the car (the touch `pointercancel` path has never been exercised on real hardware)
+- [ ] Open the page on a **phone** and work through the ◀ ▶ ▲ ▼ buttons — releasing must stop the car (the touch `pointercancel` path has never been exercised on real hardware)
 - [ ] If ultrasonics are fitted: in manual mode, bring a board close → the emergency stop must fire (**the emergency brake stays active in every mode**)
 - [ ] `Ctrl-C` → the log shows a safe stop, the process exits cleanly, and the motors receive no further output
 - [ ] **Restore `max_manual_throttle` / `max_manual_reverse` to `0.40` / `-0.25`**
