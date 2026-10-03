@@ -47,31 +47,25 @@ class VisionConfig:
 
 @dataclass
 class ControlConfig:
-    # Steering PID parameters
-    kp: float = 0.65
-    ki: float = 0.00
-    kd: float = 0.12
+    # control
+    kp = 0.65
+    ki = 0
+    kd = 0.12
+    base_throttle = 0.3
+    max_throttle = 0.5
+    min_throttle = 0.22
+    throttle_deadband = 0.18
+    turn_slowdown_factor = 0.06
+    reverse_throttle = -0.25
+    steering_trim = 0
 
-    # Steering limits [-1.0, 1.0]
-    steering_sensitivity: float = 1.5
-    max_steering: float = 1.0
-    min_steering: float = -1.0
-    steering_trim: float = 0.0       # Hardware zero-point calibration trim
-    invert_steering: bool = False    # Invert steering direction if servo turns opposite
-
-    # Throttle / Speed settings
-    base_throttle: float = 0.30      # Cruising speed (0.0 to 1.0)
-    max_throttle: float = 0.50       # Straight line boost
-    min_throttle: float = 0.22       # Minimum forward throttle during corners
-    throttle_deadband: float = 0.18  # Minimum ESC throttle to overcome motor static friction
-    reverse_throttle: float = -0.25  # Reverse speed for unstuck
-    invert_throttle: bool = False    # Invert throttle direction
-
-    # Dynamic speed scaling: reduce speed when steering angle is large
-    turn_slowdown_factor: float = 0.4
-    
-    # ESC arming delay (in seconds) on startup
-    esc_arm_time: float = 1.5
+    # vision
+    roi_top_ratio = 0.45
+    roi_bottom_ratio = 0.95
+    detection_mode = "edge_contours"
+    num_scan_slices = 5
+    canny_threshold1 = 50
+    canny_threshold2 = 150
 
 
 @dataclass
