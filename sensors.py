@@ -5,6 +5,7 @@ Provides safety override signals for steering and emergency braking.
 """
 
 import logging
+import threading
 import time
 from typing import Tuple, Optional
 from config import SensorConfig
@@ -111,29 +112,80 @@ class SensorManager:
         self.left_ir = IRSensor(config.left_ir_pin)
         self.right_ir = IRSensor(config.right_ir_pin)
 
+        # Ultrasonic ranging is a busy-wait that can block for tens of milliseconds
+        # per sensor. A background thread refreshes cached distances so the main
+        # control loop only ever performs a non-blocking cache read.
+        self._stop_event = threading.Event()
+        self._sample_thread: Optional[threading.Thread] = None
+        self._distance_lock = threading.Lock()
+        self._left_dist = 999.0
+        self._right_dist = 999.0
+
     def start(self):
-        """Initialize all configured sensors."""
+        """Initialize all configured sensors and start the ultrasonic sampler."""
         if not self.config.enable_sensors:
             logging.info("External distance sensors are disabled in config.")
             return
 
-        if RPI_GPIO_AVAILABLE:
-            try:
-                GPIO.setmode(GPIO.BCM)
-                GPIO.setwarnings(False)
-                self.left_sonar.init_gpio()
-                self.right_sonar.init_gpio()
-                self.left_ir.init_gpio()
-                self.right_ir.init_gpio()
-                logging.info("Sensor Manager started with GPIO.")
-            except Exception as e:
-                logging.error(f"Error initializing GPIO in SensorManager: {e}")
-        else:
+        if not RPI_GPIO_AVAILABLE:
             logging.warning("RPi.GPIO not available. Sensors running in mock pass-through mode.")
+            return
 
-    def get_obstacle_override(self, base_steering: float, base_throttle: float) -> Tuple[float, float, bool]:
+        try:
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setwarnings(False)
+            self.left_sonar.init_gpio()
+            self.right_sonar.init_gpio()
+            self.left_ir.init_gpio()
+            self.right_ir.init_gpio()
+            logging.info("Sensor Manager started with GPIO.")
+        except Exception as e:
+            logging.error(f"Error initializing GPIO in SensorManager: {e}")
+            return
+
+        # Start the non-blocking ultrasonic sampler
+        self._stop_event.clear()
+        self._sample_thread = threading.Thread(
+            target=self._ultrasonic_loop, name="ultrasonic-sampler", daemon=True
+        )
+        self._sample_thread.start()
+        logging.info(
+            f"Ultrasonic sampler thread started "
+            f"(sweep interval: {self.config.ultrasonic_sample_interval * 1000:.0f} ms)."
+        )
+
+    def _ultrasonic_loop(self):
+        """Background sampler: keep cached side distances fresh without blocking the main loop."""
+        interval = self.config.ultrasonic_sample_interval
+        while not self._stop_event.is_set():
+            try:
+                left = self.left_sonar.measure_distance()
+                right = self.right_sonar.measure_distance()
+                with self._distance_lock:
+                    self._left_dist = left
+                    self._right_dist = right
+            except Exception as e:
+                # A single failed sweep must never kill the sampler thread.
+                logging.debug(f"Ultrasonic sweep error: {e}")
+            self._stop_event.wait(interval)
+        logging.info("Ultrasonic sampler thread stopped.")
+
+    def _read_distances(self) -> Tuple[float, float]:
+        """Read the most recent cached ultrasonic distances (non-blocking)."""
+        with self._distance_lock:
+            return self._left_dist, self._right_dist
+
+    def get_obstacle_override(self, base_steering: float, base_throttle: float,
+                              apply_steering_bias: bool = True) -> Tuple[float, float, bool]:
         """
         Check side and front distances, adjust steering/throttle if a wall is too close.
+
+        Args:
+            apply_steering_bias: when False, skip the side-wall steering correction and
+                keep only the emergency stop. Manual driving passes False so the
+                operator remains the sole steering authority, while the emergency
+                brake keeps the last word in every driving mode. Defaults to True
+                (autonomous behaviour).
 
         Returns:
             adjusted_steering (float): adjusted steering command
@@ -143,8 +195,7 @@ class SensorManager:
         if not self.config.enable_sensors:
             return base_steering, base_throttle, False
 
-        left_dist = self.left_sonar.measure_distance()
-        right_dist = self.right_sonar.measure_distance()
+        left_dist, right_dist = self._read_distances()
         left_ir_blocked = self.left_ir.is_obstacle_detected()
         right_ir_blocked = self.right_ir.is_obstacle_detected()
 
@@ -152,10 +203,13 @@ class SensorManager:
         adjusted_throttle = base_throttle
         is_emergency = False
 
-        # Emergency stop condition
+        # Emergency stop condition -- always active, in every driving mode.
         if min(left_dist, right_dist) < self.config.emergency_stop_dist_cm:
             logging.warning("Emergency proximity threshold triggered!")
             return 0.0, 0.0, True
+
+        if not apply_steering_bias:
+            return adjusted_steering, adjusted_throttle, is_emergency
 
         # Left wall proximity push right
         if left_dist < self.config.side_warning_dist_cm or left_ir_blocked:
@@ -170,7 +224,13 @@ class SensorManager:
         return adjusted_steering, adjusted_throttle, is_emergency
 
     def cleanup(self):
-        """Clean up GPIO resources."""
+        """Stop the sampler thread and clean up GPIO resources."""
+        # Stop the sampler first so it cannot touch GPIO pins while they are released.
+        self._stop_event.set()
+        if self._sample_thread is not None:
+            self._sample_thread.join(timeout=1.0)
+            self._sample_thread = None
+
         if RPI_GPIO_AVAILABLE and self.config.enable_sensors:
             try:
                 GPIO.cleanup()

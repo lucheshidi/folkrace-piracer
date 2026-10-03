@@ -5,102 +5,23 @@ Uses Python standard library http.server and socketserver (Zero extra pip depend
 """
 
 import io
+import json
 import logging
 import threading
 import time
 from http import server
 from socketserver import ThreadingMixIn
 from typing import Optional
+from urllib.parse import urlsplit
 import numpy as np
+
+from webcontrol import RemoteState
+from webui import render_page
 
 try:
     import cv2
 except ImportError:
     cv2 = None
-
-PAGE = """\
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PiRacer Pro - Live Camera Stream</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background-color: #121212;
-            color: #ffffff;
-            margin: 0;
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-        .container {
-            max-width: 900px;
-            width: 100%;
-            background: #1e1e1e;
-            border-radius: 12px;
-            padding: 20px;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-            text-align: center;
-        }
-        h1 {
-            font-size: 1.5rem;
-            margin-top: 0;
-            color: #00e676;
-            letter-spacing: 1px;
-        }
-        .stream-box {
-            position: relative;
-            margin: 15px 0;
-            border: 2px solid #333;
-            border-radius: 8px;
-            overflow: hidden;
-            background: #000;
-            min-height: 240px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-        img {
-            width: 100%;
-            height: auto;
-            max-height: 70vh;
-            object-fit: contain;
-            display: block;
-        }
-        .footer {
-            margin-top: 15px;
-            font-size: 0.85rem;
-            color: #888;
-        }
-        .status-badge {
-            display: inline-block;
-            background: #2e7d32;
-            color: #fff;
-            padding: 4px 10px;
-            border-radius: 12px;
-            font-size: 0.8rem;
-            font-weight: bold;
-            margin-bottom: 10px;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🏎️ PiRacer Pro - Folkrace Vision Stream</h1>
-        <div><span class="status-badge">● LIVE STREAMING</span></div>
-        <div class="stream-box">
-            <img src="/stream.mjpg" alt="Live Camera Video Stream" />
-        </div>
-        <div class="footer">
-            Waveshare PiRacer Pro AI Kit | Chalmers Folkrace Autonomous Driving
-        </div>
-    </div>
-</body>
-</html>
-"""
 
 
 class StreamingOutput:
@@ -118,7 +39,7 @@ class StreamingOutput:
 
 
 class StreamingHandler(server.BaseHTTPRequestHandler):
-    """HTTP request handler providing both HTML dashboard and MJPEG video feed."""
+    """HTTP request handler providing the HTML dashboard, MJPEG feed and control API."""
 
     output: Optional[StreamingOutput] = None
 
@@ -126,15 +47,85 @@ class StreamingHandler(server.BaseHTTPRequestHandler):
         # Suppress routine per-frame HTTP GET 200 logs to keep console clean
         return
 
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @property
+    def remote(self) -> Optional[RemoteState]:
+        """Per-server RemoteState (never a class attribute -- see ThreadedHTTPServer)."""
+        return getattr(self.server, "remote", None)
+
+    def _send_json(self, payload: dict, status: int = 200):
+        content = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(content)
+
+    def _read_json_body(self) -> Optional[dict]:
+        """
+        Read and parse a JSON request body, or send an error response and return None.
+
+        Requiring application/json is a security measure, not pedantry. A fetch()
+        carrying this Content-Type is no longer a CORS "simple request", so the
+        browser sends a preflight OPTIONS first -- and this server implements no
+        do_OPTIONS and sends no Access-Control-Allow-* headers, so the preflight
+        fails and a malicious page on another origin cannot drive the car. A
+        text/plain body would skip the preflight entirely. Never add CORS headers.
+        """
+        content_type = self.headers.get("Content-Type", "")
+        if content_type.split(";")[0].strip().lower() != "application/json":
+            self._send_json({"ok": False, "error": "Content-Type must be application/json"}, 415)
+            return None
+
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0 or length > 8192:
+            self._send_json({"ok": False, "error": "missing or oversized body"}, 400)
+            return None
+
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            self._send_json({"ok": False, "error": "malformed JSON"}, 400)
+            return None
+
+        if not isinstance(payload, dict):
+            self._send_json({"ok": False, "error": "body must be a JSON object"}, 400)
+            return None
+        return payload
+
+    # ------------------------------------------------------------------
+    # Routes
+    # ------------------------------------------------------------------
+
     def do_GET(self):
-        if self.path == '/':
+        # urlsplit, not self.path: "?t=123" cache-busters must not turn into a 404.
+        path = urlsplit(self.path).path
+
+        if path == '/':
+            existing = self.remote
+            content = render_page(existing).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
-            content = PAGE.encode('utf-8')
             self.send_header('Content-Length', str(len(content)))
+            # The page structure itself depends on the launch flags, so a cached
+            # copy could show a control tab that no longer exists (or hide one that does).
+            self.send_header('Cache-Control', 'no-store')
             self.end_headers()
             self.wfile.write(content)
-        elif self.path in ('/stream.mjpg', '/video_feed'):
+        elif path == '/api/state':
+            existing = self.remote
+            if existing is None:
+                self._send_json({"ok": False, "error": "remote control is not available"}, 503)
+            else:
+                self._send_json(existing.snapshot())
+        elif path in ('/stream.mjpg', '/video_feed'):
             self.send_response(200)
             self.send_header('Age', '0')
             self.send_header('Cache-Control', 'no-cache, private')
@@ -156,8 +147,46 @@ class StreamingHandler(server.BaseHTTPRequestHandler):
             except Exception as e:
                 logging.debug(f"Streaming client disconnected: {e}")
         else:
+            # send_error() writes its own terminating blank line; a following
+            # end_headers() would append a stray CRLF into the body.
             self.send_error(404)
-            self.end_headers()
+
+    def do_POST(self):
+        path = urlsplit(self.path).path
+
+        if path not in ('/api/manual', '/api/tune'):
+            self.send_error(404)
+            return
+
+        existing = self.remote
+        if existing is None:
+            self._send_json({"ok": False, "error": "remote control is not available"}, 503)
+            return
+
+        payload = self._read_json_body()
+        if payload is None:
+            return
+
+        if path == '/api/manual':
+            action = payload.get("action")
+            if action is not None:
+                if action in ("arm", "stop", "start"):
+                    result = existing.set_mode(action)
+                else:
+                    result = {"ok": False, "error": f"unknown action '{action}'"}
+            else:
+                result = existing.set_drive(payload.get("steering", 0.0),
+                                            payload.get("throttle", 0.0))
+        else:
+            applied, rejected = existing.apply_tuning(payload)
+            result = {"ok": bool(applied), "applied": applied, "rejected": rejected}
+
+        status = 200 if result.get("ok") else 403
+        if not result.get("ok"):
+            # Hand the real state back immediately so a stale page resynchronises
+            # instead of retrying against a mode the car is not actually in.
+            result["state"] = existing.snapshot()
+        self._send_json(result, status)
 
 
 class ThreadedHTTPServer(ThreadingMixIn, server.HTTPServer):
@@ -165,14 +194,22 @@ class ThreadedHTTPServer(ThreadingMixIn, server.HTTPServer):
     allow_reuse_address = True
     daemon_threads = True
 
+    def __init__(self, address, handler, remote: Optional[RemoteState] = None):
+        # Held on the server instance rather than the handler class so that two
+        # WebStreamer instances (or a restart) cannot share one RemoteState.
+        self.remote = remote
+        super().__init__(address, handler)
+
 
 class WebStreamer:
-    """Manager for Web MJPEG live camera stream."""
+    """Manager for Web MJPEG live camera stream and the optional control API."""
 
-    def __init__(self, host: str = "0.0.0.0", port: int = 8080, jpeg_quality: int = 70):
+    def __init__(self, host: str = "0.0.0.0", port: int = 8080, jpeg_quality: int = 70,
+                 remote: Optional[RemoteState] = None):
         self.host = host
         self.port = port
         self.jpeg_quality = jpeg_quality
+        self.remote = remote
         self.output = StreamingOutput()
         self.server: Optional[ThreadedHTTPServer] = None
         self.server_thread: Optional[threading.Thread] = None
@@ -185,7 +222,8 @@ class WebStreamer:
 
         StreamingHandler.output = self.output
         try:
-            self.server = ThreadedHTTPServer((self.host, self.port), StreamingHandler)
+            self.server = ThreadedHTTPServer((self.host, self.port), StreamingHandler,
+                                             remote=self.remote)
             self.server_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
             self.server_thread.start()
             self.is_running = True

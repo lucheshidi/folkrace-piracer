@@ -16,3 +16,8 @@ venv/
 
 FolkRace.iml
 FolkRace.ipr
+
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+.mcp.json
