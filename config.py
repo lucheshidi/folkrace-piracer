@@ -59,6 +59,11 @@ class ControlConfig:
     reverse_throttle = -0.25
     steering_trim = 0
     esc_arm_time = 1.0
+    invert_steering = False
+    invert_throttle = False
+    steering_sensitivity = 1.0
+    min_steering = -1.0
+    max_steering = 1.0
 
     # vision
     roi_top_ratio = 0.45
