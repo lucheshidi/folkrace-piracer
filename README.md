@@ -112,6 +112,15 @@ program on the Raspberry Pi — opening the page is never enough to take control
 
 `--allow-manual` implies `--allow-tuning`.
 
+**Language**
+
+The console ships in English and Simplified Chinese. The first visit picks one from
+the browser's `Accept-Language`; the `EN` / `中文` buttons in the top right override
+it at any time, and the choice is remembered per browser. Both languages are inside
+the page, so switching **does not reload it** — the video keeps streaming and a drive
+in progress is not interrupted. Parameter labels and notes are translated too, in the
+Tuning tab.
+
 **Manual drive flow**
 
 ```text
@@ -124,6 +133,28 @@ start ──► PAUSED (car held)
 
 After a stop you can hold ARM again to go back to manual; no restart needed.
 Press `Ctrl-C` in the terminal to quit.
+
+**Driving**
+
+Hold to move, let go and it centres — no axis latches.
+
+| Action | Keyboard | Touch |
+|---|---|---|
+| Accelerate | hold `W` | hold ▲ |
+| Brake / reverse | hold `S` | hold ▼ |
+| Steer left / right | `A` / `D` | ◀ / ▶ |
+| Emergency stop | `Space` | `■ STOP` |
+| Arm | hold `M` for 2 s | hold `HOLD TO ARM` for 2 s |
+
+Both axes **ramp** rather than stepping to full travel: throttle reaches its cap in
+about 0.45 s and steering in about the same, and releasing returns either to centre
+in 0.2–0.3 s. That is partly feel and partly the servo and ESC never taking a
+full-range hit on every key press. The trade-off is that a quick tap barely does
+anything — hold the key to see the car move.
+
+A gauge strip is overlaid on the bottom of the picture: the steering dot tracks your
+steering, the throttle bar tracks throttle (green forward, amber reverse). It only
+appears on the **Manual Drive** tab.
 
 **Safety properties**
 

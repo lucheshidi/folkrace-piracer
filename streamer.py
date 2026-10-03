@@ -110,7 +110,9 @@ class StreamingHandler(server.BaseHTTPRequestHandler):
 
         if path == '/':
             existing = self.remote
-            content = render_page(existing).encode('utf-8')
+            # The header sets the first paint's language only; the page carries both
+            # and remembers the viewer's own choice from then on.
+            content = render_page(existing, self.headers.get('Accept-Language', '')).encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.send_header('Content-Length', str(len(content)))
