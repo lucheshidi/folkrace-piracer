@@ -92,16 +92,16 @@ class Camera:
         if not self.is_running:
             raise RuntimeError("Camera is not started. Call camera.start() first.")
 
+        frame = None
         if PICAMERA2_AVAILABLE and self.picam2 is not None:
             try:
                 frame = self.picam2.capture_array()
                 frame = numpy.rot90(frame, 2, (1, 0))
                 if frame is not None and len(frame.shape) == 3:
                     if frame.shape[2] == 4 and cv2 is not None:
-                        return cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
+                        frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
                     elif frame.shape[2] == 3 and cv2 is not None and self.format.startswith("RGB"):
-                        return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                return frame
+                        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             except Exception as e:
                 logging.warning(f"Error capturing from Picamera2: {e}")
 
@@ -110,22 +110,28 @@ class Camera:
             if ret and frame is not None:
                 if (frame.shape[1], frame.shape[0]) != (self.width, self.height):
                     frame = cv2.resize(frame, (self.width, self.height))
-                return frame
 
         # Fallback synthetic frame with simulated road for testing without hardware
-        synthetic_frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-        # Draw mock road (gray trapezoid) and white line in the middle
-        if cv2 is not None:
-            pts = np.array([
-                [self.width * 0.2, self.height],
-                [self.width * 0.4, self.height * 0.4],
-                [self.width * 0.6, self.height * 0.4],
-                [self.width * 0.8, self.height]
-            ], np.int32)
-            cv2.fillPoly(synthetic_frame, [pts], (80, 80, 80))
-            cv2.line(synthetic_frame, (int(self.width * 0.5), int(self.height * 0.4)),
-                     (int(self.width * 0.5), self.height), (255, 255, 255), 4)
-        return synthetic_frame
+        if frame is None:
+            frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+            # Draw mock road (gray trapezoid) and white line in the middle
+            if cv2 is not None:
+                pts = np.array([
+                    [self.width * 0.2, self.height],
+                    [self.width * 0.4, self.height * 0.4],
+                    [self.width * 0.6, self.height * 0.4],
+                    [self.width * 0.8, self.height]
+                ], np.int32)
+                cv2.fillPoly(frame, [pts], (80, 80, 80))
+                cv2.line(frame, (int(self.width * 0.5), int(self.height * 0.4)),
+                         (int(self.width * 0.5), self.height), (255, 255, 255), 4)
+
+        # Crop bottom 1/5 of the frame
+        if frame is not None and len(frame.shape) == 3:
+            crop_height = int(frame.shape[0] * 4 / 5)
+            frame = frame[:crop_height, :, :]
+
+        return frame
 
     def stop(self):
         """Stop and release camera resources."""
