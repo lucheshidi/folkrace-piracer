@@ -53,6 +53,7 @@ class ControlConfig:
     kd: float = 0.12
 
     # Steering limits [-1.0, 1.0]
+    steering_sensitivity: float = 1.5
     max_steering: float = 1.0
     min_steering: float = -1.0
     steering_trim: float = 0.0       # Hardware zero-point calibration trim
