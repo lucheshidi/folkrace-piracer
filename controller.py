@@ -217,10 +217,19 @@ class VehicleController:
 
         if self.piracer is not None:
             try:
+                # Same two-way dispatch as set_drive(). Without the attribute
+                # fallbacks a property-style backend would drive but never stop:
+                # both hasattr() calls below would be False and this block would
+                # silently send nothing. That path is the emergency stop.
                 if hasattr(self.piracer, "set_steering_percent"):
                     self.piracer.set_steering_percent(0.0)
+                elif hasattr(self.piracer, "steering"):
+                    self.piracer.steering = 0.0
+
                 if hasattr(self.piracer, "set_throttle_percent"):
                     self.piracer.set_throttle_percent(0.0)
+                elif hasattr(self.piracer, "throttle"):
+                    self.piracer.throttle = 0.0
             except Exception as e:
                 logging.error(f"Error during piracer stop: {e}")
 
