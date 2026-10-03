@@ -122,21 +122,23 @@ class RoadPerception:
                 slice_y2 = (i + 1) * slice_height
                 slice_edges = edges[slice_y1:slice_y2, :]
 
-                # Split slice into left and right halves for independent wall detection
-                left_half_edges = slice_edges[:, :int(roi_w / 2)]
-                right_half_edges = slice_edges[:, int(roi_w / 2):]
+                # Split slice into left and right halves with overlap for independent wall detection
+                split_x = int(roi_w / 2)
+                overlap = int(roi_w * 0.1)  # 10% overlap
+                left_half_edges = slice_edges[:, :split_x + overlap]
+                right_half_edges = slice_edges[:, split_x - overlap:]
 
                 # Find left boundary from left half only
                 left_edge_points = np.where(left_half_edges > 0)
                 left_boundary = None
-                if len(left_edge_points[1]) > 5:
+                if len(left_edge_points[1]) > 3:
                     left_boundary = np.min(left_edge_points[1])
 
                 # Find right boundary from right half only (add offset to get absolute x)
                 right_edge_points = np.where(right_half_edges > 0)
                 right_boundary = None
-                if len(right_edge_points[1]) > 5:
-                    right_boundary = np.max(right_edge_points[1]) + int(roi_w / 2)
+                if len(right_edge_points[1]) > 3:
+                    right_boundary = np.max(right_edge_points[1]) + (split_x - overlap)
 
                 # Calculate center if both walls detected
                 if left_boundary is not None and right_boundary is not None:
