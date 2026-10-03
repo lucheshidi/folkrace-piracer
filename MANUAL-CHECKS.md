@@ -10,7 +10,8 @@
 
 ## 1. 部署（树莓派）
 
-- [ ] 安装依赖：`python3-opencv` `python3-numpy` `python3-picamera2`，以及 `pip3 install piracer-py`
+
+- [ ] 安装依赖：`opencv-python` `python3-numpy` `python3-picamera2`，以及 `piracer-py`
 - [ ] `i2cdetect -y 1` 能看到 PCA9685 的 `0x40`
 - [ ] **车轮悬空**跑 `python3 test_hardware.py`，I2C / ESC 解锁 / 舵机扫掠 / 电机正反转 / 相机五项全过
 
