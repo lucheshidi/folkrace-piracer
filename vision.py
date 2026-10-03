@@ -122,52 +122,32 @@ class RoadPerception:
                 slice_y2 = (i + 1) * slice_height
                 slice_edges = edges[slice_y1:slice_y2, :]
 
-                # Split slice into left and right halves with overlap for independent wall detection
-                split_x = int(roi_w / 2)
-                overlap = int(roi_w * 0.1)  # 10% overlap
-                left_half_edges = slice_edges[:, :split_x + overlap]
-                right_half_edges = slice_edges[:, split_x - overlap:]
+                # Find all non-zero edge pixel coordinates
+                edge_points = np.where(slice_edges > 0)
+                if len(edge_points[1]) > 10:
+                    xs = edge_points[1]
+                    left_boundary = np.min(xs)
+                    right_boundary = np.max(xs)
 
-                # Find left boundary from left half only
-                left_edge_points = np.where(left_half_edges > 0)
-                left_boundary = None
-                if len(left_edge_points[1]) > 3:
-                    left_boundary = np.min(left_edge_points[1])
-
-                # Find right boundary from right half only (add offset to get absolute x)
-                right_edge_points = np.where(right_half_edges > 0)
-                right_boundary = None
-                if len(right_edge_points[1]) > 3:
-                    right_boundary = np.max(right_edge_points[1]) + (split_x - overlap)
-
-                # Calculate center if both walls detected
-                if left_boundary is not None and right_boundary is not None:
+                    # If left and right boundaries are separated by a plausible road width
                     if (right_boundary - left_boundary) > (roi_w * 0.2):
                         cx = (left_boundary + right_boundary) / 2.0
                         self.estimated_half_track_width = (right_boundary - left_boundary) / 2.0
+                    elif left_boundary > center_x:
+                        # Only right wall visible -> aim to the left of it
+                        cx = max(0.0, left_boundary - self.estimated_half_track_width)
                     else:
-                        # Walls too close, ignore this slice
-                        continue
-                elif left_boundary is not None:
-                    # Only left wall visible -> aim to the right of it
-                    cx = min(float(roi_w), left_boundary + self.estimated_half_track_width)
-                elif right_boundary is not None:
-                    # Only right wall visible -> aim to the left of it
-                    cx = max(0.0, right_boundary - self.estimated_half_track_width)
-                else:
-                    # No walls detected in this slice
-                    continue
+                        # Only left wall visible -> aim to the right of it
+                        cx = min(float(roi_w), right_boundary + self.estimated_half_track_width)
 
-                weight = 1.0 + (i / float(num_slices))
-                slice_centers.append(cx)
-                slice_weights.append(weight)
+                    weight = 1.0 + (i / float(num_slices))
+                    slice_centers.append(cx)
+                    slice_weights.append(weight)
 
-                if debug_frame is not None:
-                    abs_y = y_start + slice_y1 + (slice_height // 2)
-                    cv2.circle(debug_frame, (int(cx), abs_y), 5, (0, 255, 0), -1)
-                    if left_boundary is not None:
+                    if debug_frame is not None:
+                        abs_y = y_start + slice_y1 + (slice_height // 2)
+                        cv2.circle(debug_frame, (int(cx), abs_y), 5, (0, 255, 0), -1)
                         cv2.circle(debug_frame, (int(left_boundary), abs_y), 4, (0, 0, 255), -1)
-                    if right_boundary is not None:
                         cv2.circle(debug_frame, (int(right_boundary), abs_y), 4, (255, 0, 0), -1)
 
         # Mode B: Centroid / Lane Line Moment Scanning
