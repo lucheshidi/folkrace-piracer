@@ -51,6 +51,12 @@ class Param:
     step: float = 0.01
     choices: Tuple[str, ...] = ()
     note: str = ""
+    # Simplified Chinese for the same three slots, shown when the console is
+    # switched to 中文. Empty means "falls back to the English above", which is the
+    # right answer for the ones that are notation already (Kp, Ki, ROI, Canny).
+    label_zh: str = ""
+    group_zh: str = ""
+    note_zh: str = ""
 
     def coerce(self, raw):
         """Validate one incoming value and convert it to the target type."""
@@ -74,16 +80,24 @@ class Param:
         return value
 
     def to_dict(self) -> dict:
+        """
+        Serialise for the web UI.
+
+        Both languages travel in the same payload so that switching language can
+        rebuild the tab in place. Re-fetching the schema would mean a page reload,
+        and a reload drops the MJPEG connection -- and an operator mid-drive into
+        the deadman.
+        """
         return {
             "key": self.key,
-            "label": self.label,
-            "group": self.group,
+            "label": {"en": self.label, "zh": self.label_zh or self.label},
+            "group": {"en": self.group, "zh": self.group_zh or self.group},
             "kind": self.kind,
             "min": self.minimum,
             "max": self.maximum,
             "step": self.step,
             "choices": list(self.choices),
-            "note": self.note,
+            "note": {"en": self.note, "zh": self.note_zh or self.note},
         }
 
 
@@ -102,36 +116,62 @@ class Param:
 #                               able to switch that layer off.
 TUNABLES: Tuple[Param, ...] = (
     Param("control.kp", "Kp", "Steering PID", "float", 0.0, 2.0, 0.01,
-          note="Higher reacts sooner to lane error; too high oscillates."),
+          note="Higher reacts sooner to lane error; too high oscillates.",
+          group_zh="转向 PID",
+          note_zh="越高对循线误差反应越快；过高会震荡。"),
     Param("control.ki", "Ki", "Steering PID", "float", 0.0, 1.0, 0.01,
-          note="Corrects steady offset; rarely needed on a symmetric track."),
+          note="Corrects steady offset; rarely needed on a symmetric track.",
+          group_zh="转向 PID",
+          note_zh="修正固定偏移；对称赛道上基本用不到。"),
     Param("control.kd", "Kd", "Steering PID", "float", 0.0, 1.0, 0.01,
-          note="Damppens oscillation on straights."),
+          note="Dampens oscillation on straights.",
+          group_zh="转向 PID",
+          note_zh="抑制直道上的左右摆动。"),
 
-    Param("control.base_throttle", "Base throttle", "Speed", "float", 0.0, 0.6, 0.01),
-    Param("control.max_throttle", "Max throttle", "Speed", "float", 0.0, 0.8, 0.01),
-    Param("control.min_throttle", "Min throttle", "Speed", "float", 0.0, 0.5, 0.01),
+    Param("control.base_throttle", "Base throttle", "Speed", "float", 0.0, 0.6, 0.01,
+          label_zh="基础油门", group_zh="速度"),
+    Param("control.max_throttle", "Max throttle", "Speed", "float", 0.0, 0.8, 0.01,
+          label_zh="最高油门", group_zh="速度"),
+    Param("control.min_throttle", "Min throttle", "Speed", "float", 0.0, 0.5, 0.01,
+          label_zh="最低油门", group_zh="速度"),
     Param("control.throttle_deadband", "Throttle deadband", "Speed", "float", 0.0, 0.4, 0.01,
-          note="Below this the motor does not overcome static friction."),
-    Param("control.turn_slowdown_factor", "Turn slowdown", "Speed", "float", 0.0, 1.0, 0.01),
-    Param("control.reverse_throttle", "Reverse throttle", "Speed", "float", -0.5, 0.0, 0.01),
+          note="Below this the motor does not overcome static friction.",
+          label_zh="油门死区", group_zh="速度",
+          note_zh="低于此值电机克服不了静摩擦，车子不会动。"),
+    Param("control.turn_slowdown_factor", "Turn slowdown", "Speed", "float", 0.0, 1.0, 0.01,
+          label_zh="弯道减速", group_zh="速度"),
+    Param("control.reverse_throttle", "Reverse throttle", "Speed", "float", -0.5, 0.0, 0.01,
+          label_zh="倒车油门", group_zh="速度"),
 
     Param("control.steering_trim", "Steering trim", "Steering", "float", -0.3, 0.3, 0.005,
-          note="Hardware zero-point calibration."),
+          note="Hardware zero-point calibration.",
+          label_zh="转向中位微调", group_zh="转向",
+          note_zh="硬件零点校准，补偿舵机中位偏。"),
 
     Param("vision.roi_top_ratio", "ROI top", "Region of Interest", "float", 0.0, 0.9, 0.01,
-          note="Ignore ceiling and horizon."),
+          note="Ignore ceiling and horizon.",
+          label_zh="ROI 上界", group_zh="感兴趣区域",
+          note_zh="忽略天花板和远处背景。"),
     Param("vision.roi_bottom_ratio", "ROI bottom", "Region of Interest", "float", 0.1, 1.0, 0.01,
-          note="Ignore the bumper shadow. Must stay above ROI top."),
+          note="Ignore the bumper shadow. Must stay above ROI top.",
+          label_zh="ROI 下界", group_zh="感兴趣区域",
+          note_zh="忽略车头保险杠阴影。必须保持在 ROI 上界之下。"),
 
     Param("vision.detection_mode", "Detection mode", "Track Detection", "enum",
-          choices=("edge_contours", "lane_line", "color_mask")),
+          choices=("edge_contours", "lane_line", "color_mask"),
+          label_zh="检测模式", group_zh="赛道检测"),
     Param("vision.num_scan_slices", "Scan slices", "Track Detection", "int", 1, 12, 1,
-          note="Too many slices per ROI leaves too few edge pixels per slice."),
+          note="Too many slices per ROI leaves too few edge pixels per slice.",
+          label_zh="扫描切片数", group_zh="赛道检测",
+          note_zh="切片太多会让每片里的边缘像素过少，反而测不准。"),
     Param("vision.canny_threshold1", "Canny low", "Track Detection", "int", 0, 255, 1,
-          note="Combined with an adaptive estimate, so the effect may be muted."),
+          note="Combined with an adaptive estimate, so the effect may be muted.",
+          label_zh="Canny 低阈值", group_zh="赛道检测",
+          note_zh="会与自适应估计值合并取值，效果可能不明显。"),
     Param("vision.canny_threshold2", "Canny high", "Track Detection", "int", 0, 255, 1,
-          note="Combined with an adaptive estimate, so the effect may be muted."),
+          note="Combined with an adaptive estimate, so the effect may be muted.",
+          label_zh="Canny 高阈值", group_zh="赛道检测",
+          note_zh="会与自适应估计值合并取值，效果可能不明显。"),
 )
 
 PARAMS_BY_KEY: Dict[str, Param] = {param.key: param for param in TUNABLES}
