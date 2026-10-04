@@ -148,6 +148,34 @@ class RemoteConfig:
 
 
 @dataclass
+class RemoteConfig:
+    """
+    Web remote control settings for debugging (live tuning + manual driving).
+
+    Both gates default to False. The web page is served to anyone on the LAN, so
+    the terminal command that starts the program is what decides whether a control
+    tab exists at all -- opening the page is never enough to take control of the
+    car. A competition run must stay autonomous, so neither gate belongs in the
+    race-day command line.
+    """
+    # Terminal-side gates (--allow-tuning / --allow-manual). Without them the web
+    # page renders the video feed and telemetry only.
+    allow_tuning: bool = False   # Live parameter tuning; the car stays autonomous.
+    allow_manual: bool = False   # Manual drive tab; implies allow_tuning.
+
+    # Deadman: if no drive command arrives within this window while armed, the car
+    # is commanded to a full stop. Mandatory safety net -- do not disable.
+    deadman_timeout_s: float = 0.8
+
+    # Hard limits applied to operator input (server side, defence in depth).
+    # max_manual_throttle deliberately sits below ControlConfig.max_throttle (0.50):
+    # manual driving must never be faster than autonomous driving.
+    max_manual_throttle: float = 0.40
+    max_manual_reverse: float = -0.25
+    max_manual_steering: float = 1.0
+
+
+@dataclass
 class AppConfig:
     camera: CameraConfig = field(default_factory=CameraConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
