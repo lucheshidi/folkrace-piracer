@@ -73,7 +73,7 @@ def main():
         throttle(value)
         time.sleep(seconds)
 
-    logging.info("⚠️  注意：必须把车轮悬空。3 秒后开始。")
+    logging.info("注意：车轮必须悬空！3 秒后开始运行。")
     time.sleep(3.0)
 
     try:
