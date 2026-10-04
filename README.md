@@ -73,6 +73,11 @@ http://<RaspberryPiIP>:8080
 ```
 > The page will display real-time car camera front view, track centerline recognition trajectory, and real-time telemetry data (FPS, real-time steering angle Steer, real-time throttle Thr).
 > Customizable port: `python3 main.py --stream --port 8080 --throttle 0.32`
+>
+> The stream runs at 15 fps by default (`StreamConfig.fps` in `config.py`). The car and
+> the browser share one Wi-Fi link, so the video's share of it is bandwidth the drive
+> commands do not get; a command that arrives more than 0.8 s late is held by the
+> deadman, so raise this one carefully.
 
 ### 2. Competition Real Car Running (Maximum speed no-interface mode, highest frame rate)
 ```bash
@@ -161,7 +166,12 @@ appears on the **Manual Drive** tab.
 - **Armed is not moving.** Arming enters MANUAL at zero throttle and the car stays
   still until a drive command actually arrives.
 - **Deadman.** If no command arrives for 0.8 s, the car is commanded to a full stop.
-  It stays in MANUAL and never resumes autonomous driving on its own.
+  It stays in MANUAL and never resumes autonomous driving on its own. The page badge
+  turns amber and blinks `MANUAL - COMMANDS LOST`: the mode is still MANUAL but the car
+  has stopped obeying the operator, and showing those two facts separately is the point
+  — a badge that showed only the mode looked exactly like "the controls are broken".
+  The page also stops winding its axes up while this lasts, so when the link returns the
+  throttle climbs from zero instead of releasing the input that piled up behind it.
 - **Server-side clamping.** Operator input is clamped to `RemoteConfig.max_manual_throttle`
   (0.40), deliberately below the autonomous `max_throttle` (0.50): manual driving can
   never outrun autonomous driving.

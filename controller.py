@@ -157,7 +157,7 @@ class VehicleController:
         raw_steering = self.pid.compute(error) + self.config.steering_trim
         if self.config.invert_steering:
             raw_steering = -raw_steering
-        steering = float(np.clip(raw_steering, self.config.min_steering, self.config.max_steering))
+        steering = float(np.clip(raw_steering * self.config.steering_sensitivity, self.config.min_steering, self.config.max_steering))
 
         # Dynamic throttle: reduce speed when turning sharply
         turn_severity = abs(steering)

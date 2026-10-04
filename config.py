@@ -11,7 +11,7 @@ class CameraConfig:
     # Camera resolution and framerate
     # OV5647 native fast binned mode is 640x480 @ ~60fps
     width: int = 640
-    height: int = 480
+    height: int = 460
     framerate: int = 30
     format: str = "RGB888"  # or 'BGR888'
 
@@ -47,30 +47,31 @@ class VisionConfig:
 
 @dataclass
 class ControlConfig:
-    # Steering PID parameters
-    kp: float = 0.65
-    ki: float = 0.00
-    kd: float = 0.12
+    # control
+    kp = 0.65
+    ki = 0
+    kd = 0.12
+    base_throttle = 0.3
+    max_throttle = 0.5
+    min_throttle = 0.22
+    throttle_deadband = 0.18
+    turn_slowdown_factor = 0.06
+    reverse_throttle = -0.25
+    steering_trim = 0
+    esc_arm_time = 1.0
+    invert_steering = False
+    invert_throttle = False
+    steering_sensitivity = 1.0
+    min_steering = -1.0
+    max_steering = 1.0
 
-    # Steering limits [-1.0, 1.0]
-    max_steering: float = 1.0
-    min_steering: float = -1.0
-    steering_trim: float = 0.0       # Hardware zero-point calibration trim
-    invert_steering: bool = False    # Invert steering direction if servo turns opposite
-
-    # Throttle / Speed settings
-    base_throttle: float = 0.30      # Cruising speed (0.0 to 1.0)
-    max_throttle: float = 0.50       # Straight line boost
-    min_throttle: float = 0.22       # Minimum forward throttle during corners
-    throttle_deadband: float = 0.18  # Minimum ESC throttle to overcome motor static friction
-    reverse_throttle: float = -0.25  # Reverse speed for unstuck
-    invert_throttle: bool = False    # Invert throttle direction
-
-    # Dynamic speed scaling: reduce speed when steering angle is large
-    turn_slowdown_factor: float = 0.4
-    
-    # ESC arming delay (in seconds) on startup
-    esc_arm_time: float = 1.5
+    # vision
+    roi_top_ratio = 0.45
+    roi_bottom_ratio = 0.95
+    detection_mode = "edge_contours"
+    num_scan_slices = 5
+    canny_threshold1 = 50
+    canny_threshold2 = 150
 
 
 @dataclass
@@ -104,6 +105,46 @@ class StreamConfig:
     host: str = "0.0.0.0"
     port: int = 8080
     jpeg_quality: int = 70
+    # Frames per second pushed to the browsers.
+    #
+    # The control loop produces ~30 fps and hands every frame over. At quality 70
+    # that is roughly 10-15 Mbit/s of JPEG, which is the video stream's share of a
+    # link the operator is also driving the car over -- and a drive command that
+    # arrives later than RemoteConfig.deadman_timeout_s stops the car. Halving the
+    # rate roughly halves that share and 15 fps is still a perfectly usable view.
+    # Raise it only if the car is on a wired or otherwise quiet network.
+    fps: int = 15
+
+
+@dataclass
+class RemoteConfig:
+    """
+    Web remote control settings for debugging (live tuning + manual driving).
+
+    Both gates default to False. The web page is served to anyone on the LAN, so
+    the terminal command that starts the program is what decides whether a control
+    tab exists at all -- opening the page is never enough to take control of the
+    car. A competition run must stay autonomous, so neither gate belongs in the
+    race-day command line.
+    """
+    # Terminal-side gates (--allow-tuning / --allow-manual). Without them the web
+    # page renders the video feed and telemetry only.
+    allow_tuning: bool = False   # Live parameter tuning; the car stays autonomous.
+    allow_manual: bool = False   # Manual drive tab; implies allow_tuning.
+
+    # Deadman: if no drive command arrives within this window while armed, the car
+    # is commanded to a full stop. Mandatory safety net -- do not disable.
+    # Keep it above webui.SEND_TIMEOUT_MS (600 ms): the page abandons a drive request
+    # after that long and sends a fresh one, and a window shorter than one retry would
+    # stop the car on a link that is merely slow rather than actually gone.
+    deadman_timeout_s: float = 0.8
+
+    # Hard limits applied to operator input (server side, defence in depth).
+    # max_manual_throttle deliberately sits below ControlConfig.max_throttle (0.50):
+    # manual driving must never be faster than autonomous driving.
+    max_manual_throttle: float = 0.40
+    max_manual_reverse: float = -0.25
+    max_manual_steering: float = 1.0
 
 
 @dataclass

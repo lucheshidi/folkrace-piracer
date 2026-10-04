@@ -33,6 +33,18 @@ ARM_HOLD_MS = 2000
 # deadman window.
 SEND_INTERVAL_MS = 100
 
+# A drive command not answered within this window is abandoned and the next tick
+# sends a fresh one.
+#
+# Single-flight alone is not enough: one request that never settles holds the
+# in-flight flag forever and the send loop stops for good, silently. The operator
+# sees a car that ignores a held key, and the axis value that piled up behind the
+# stalled request is what the car lurches with when the link finally clears.
+#
+# Kept inside the deadman window, because a request slower than this is already
+# too stale to be worth waiting for -- the car has stopped by then regardless.
+SEND_TIMEOUT_MS = 600
+
 # Parameter changes are batched so dragging a slider does not emit a request per pixel.
 TUNE_DEBOUNCE_MS = 250
 
@@ -76,6 +88,7 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "badge.mode.auto": "AUTO - AUTONOMOUS",
         "badge.mode.paused": "PAUSED - HOLDING",
         "badge.mode.manual": "MANUAL - NOT AUTONOMOUS",
+        "badge.mode.deadman": "MANUAL - COMMANDS LOST",
 
         "tab.tuning": "Tuning",
         "tab.manual": "Manual Drive",
@@ -129,6 +142,7 @@ _STRINGS: Dict[str, Dict[str, str]] = {
         "badge.mode.auto": "AUTO - 自主驾驶",
         "badge.mode.paused": "PAUSED - 已停住",
         "badge.mode.manual": "MANUAL - 非自主控制",
+        "badge.mode.deadman": "MANUAL - 指令没送达",
 
         "tab.tuning": "调参",
         "tab.manual": "手动驾驶",
@@ -387,10 +401,17 @@ _TEMPLATE = r"""<!DOCTYPE html>
         color: #fff; background: var(--red); border-color: var(--red);
         box-shadow: 0 0 20px rgba(255, 59, 48, 0.55); animation: pulse 1.6s ease-in-out infinite;
     }
+    /* Amber and blinking, so it reads as neither "manual" (red, slow) nor "paused"
+       (amber, still): the car is in manual but is not obeying the controls. */
+    .badge.mode-deadman {
+        color: #0a0c10; background: var(--amber); border-color: var(--amber);
+        box-shadow: 0 0 20px rgba(255, 179, 0, 0.55); animation: pulse-amber 0.8s ease-in-out infinite;
+    }
     .badge.live { color: var(--neon); }
     .badge.live::before { content: "\25CF"; color: var(--red); margin-right: 5px; animation: blink 1.6s steps(1, end) infinite; }
     @keyframes blink { 0%, 60% { opacity: 1; } 61%, 100% { opacity: 0.25; } }
     @keyframes pulse { 50% { box-shadow: 0 0 6px rgba(255, 59, 48, 0.25); } }
+    @keyframes pulse-amber { 50% { box-shadow: 0 0 6px rgba(255, 179, 0, 0.25); } }
 
     .telem {
         font-family: var(--mono); font-size: 0.7rem; color: var(--muted);
@@ -586,6 +607,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
 const HAS_REMOTE = __HAS_REMOTE__;
 const ARM_HOLD_MS = __ARM_HOLD_MS__;
 const SEND_INTERVAL_MS = __SEND_INTERVAL_MS__;
+const SEND_TIMEOUT_MS = __SEND_TIMEOUT_MS__;
 const TUNE_DEBOUNCE_MS = __TUNE_DEBOUNCE_MS__;
 const STEER_RATE = __STEER_RATE__;
 const STEER_RETURN = __STEER_RETURN__;
@@ -682,6 +704,12 @@ const STATE = {
 const AXIS = { steering: 0, throttle: 0 };
 const HELD = { w: false, a: false, s: false, d: false };
 
+/* Who the car says is actually driving it, reported in telemetry. This is a
+   different question from STATE.mode: the mode is what the operator selected,
+   and it stays "manual" while the deadman holds the car at zero. Only the source
+   can tell the page that its commands have stopped arriving. */
+const SOURCE_DEADMAN = "deadman";
+
 const $ = (id) => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -695,12 +723,13 @@ function approach(value, target, step) {
  * Networking
  * ------------------------------------------------------------------ */
 
-async function postJSON(url, body) {
+async function postJSON(url, body, signal) {
     const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
-        cache: "no-store"
+        cache: "no-store",
+        signal: signal
     });
     let data = null;
     try { data = await res.json(); } catch (e) { data = null; }
@@ -753,8 +782,13 @@ function applyState(s) {
 function renderModeBadge() {
     const badge = $("mode-badge");
     if (!badge) return;
-    badge.textContent = t("badge.mode." + STATE.mode);
-    badge.className = "badge mode-" + STATE.mode;
+    // The badge names whichever of the two is more alarming. Showing the mode
+    // alone is what made a deadman-held car look like a car that was ignoring
+    // the controls: the mode was still MANUAL while the car sat at zero.
+    const state = (STATE.mode === "manual" && STATE.telemetry.source === SOURCE_DEADMAN)
+        ? "deadman" : STATE.mode;
+    badge.textContent = t("badge.mode." + state);
+    badge.className = "badge mode-" + state;
 
     const manual = STATE.mode === "manual";
     const paused = STATE.mode === "paused";
@@ -989,7 +1023,7 @@ async function copyText(text) {
  * Manual tab - the driving cockpit
  * ------------------------------------------------------------------ */
 
-let inFlight = false;
+let inFlight = null;   // AbortController of the request on the wire, or null.
 let sendTimer = null;
 let holdTimer = null;
 let holdFrame = null;
@@ -1002,17 +1036,32 @@ function startSending() {
 
 function stopSending() {
     if (sendTimer !== null) { clearInterval(sendTimer); sendTimer = null; }
+    // Leaving manual mode makes anything still on the wire meaningless.
+    if (inFlight !== null) { inFlight.abort(); inFlight = null; }
 }
 
 async function pushDrive() {
     // Single-flight: a slow response must never let drive commands stack up, or
     // the car would keep executing a queue of stale inputs after the operator stops.
-    if (inFlight || STATE.mode !== "manual") return;
-    inFlight = true;
+    //
+    // The deadline is what stops single-flight from becoming "stopped". A request
+    // that never settles holds the flag forever and the send loop goes quiet with
+    // no error anywhere -- the failure the operator experiences as a car that
+    // ignores a held key. Aborting releases the flag so the next tick retries.
+    if (inFlight !== null || STATE.mode !== "manual") return;
+    const controller = new AbortController();
+    inFlight = controller;
+    const expiry = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
     try {
-        await postJSON("/api/manual", { steering: AXIS.steering, throttle: AXIS.throttle });
+        await postJSON("/api/manual",
+                       { steering: AXIS.steering, throttle: AXIS.throttle },
+                       controller.signal);
     } catch (e) { /* transient network hiccup; the deadman covers a real outage */ }
-    finally { inFlight = false; }
+    finally {
+        clearTimeout(expiry);
+        // Only if a newer request has not already taken the slot.
+        if (inFlight === controller) inFlight = null;
+    }
 }
 
 /* Integrate the held keys into the two axis values.
@@ -1066,14 +1115,19 @@ function renderDash() {
     if ($("dash-thr")) $("dash-thr").textContent = signed(AXIS.throttle);
 }
 
+/* Centre both axes without touching what is physically held down. */
+function releaseAxes() {
+    AXIS.steering = 0;
+    AXIS.throttle = 0;
+}
+
 /* Released, blurred, hidden, stopped -- every one of them means the operator is no
    longer driving, so the axes and the physical key state are both dropped.
    Clearing HELD matters: no keyup ever arrives for a key held through a window
    blur, and without this that key still reads as pressed on the way back in. */
 function releaseAll() {
     for (const key in HELD) HELD[key] = false;
-    AXIS.steering = 0;
-    AXIS.throttle = 0;
+    releaseAxes();
     for (const button of document.querySelectorAll(".pad-btn.held")) button.classList.remove("held");
     renderDash();
 }
@@ -1275,7 +1329,14 @@ function driveLoop(now) {
     // Clamped, because a dropped frame must not turn into one enormous step.
     const dt = lastFrame ? Math.min((now - lastFrame) / 1000, MAX_FRAME_DT) : 0;
     lastFrame = now;
-    if (STATE.mode === "manual") updateAxes(dt);
+    if (STATE.mode === "manual") {
+        // While the deadman owns the car nothing on this page is reaching it, so
+        // an axis that keeps winding up is not a command -- it is a spring being
+        // loaded for a lurch the instant the link clears. Hold both at centre and
+        // let them ramp again from there, which is also what the gauges then show.
+        if (STATE.telemetry.source === SOURCE_DEADMAN) releaseAxes();
+        else updateAxes(dt);
+    }
     renderDash();
     requestAnimationFrame(driveLoop);
 }
@@ -1350,6 +1411,7 @@ def render_page(remote: Optional[RemoteState], accept_language: str = "") -> str
             .replace("__HAS_REMOTE__", "true" if remote is not None else "false")
             .replace("__ARM_HOLD_MS__", str(ARM_HOLD_MS))
             .replace("__SEND_INTERVAL_MS__", str(SEND_INTERVAL_MS))
+            .replace("__SEND_TIMEOUT_MS__", str(SEND_TIMEOUT_MS))
             .replace("__TUNE_DEBOUNCE_MS__", str(TUNE_DEBOUNCE_MS))
             .replace("__STEER_RATE__", str(STEER_RATE))
             .replace("__STEER_RETURN__", str(STEER_RETURN))

@@ -171,6 +171,7 @@ def main():
         host=config.stream.host,
         port=config.stream.port,
         jpeg_quality=config.stream.jpeg_quality,
+        fps=config.stream.fps,
         remote=remote,
     ) if config.stream.enable_stream else None
 
