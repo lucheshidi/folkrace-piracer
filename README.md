@@ -1,5 +1,8 @@
 **English** | [简体中文](README-ch.md)
 
+>[!CAUTION]
+>This repository is abandoned and replaced at [this repo](https://github.com/AAACoderGods/folkrace-piracer).
+
 # WaveShare PiRacer Pro - Chalmers Folkrace Autonomous Driving Control Program
 
 This project is an autonomous line-following and road perception control system designed specifically for the **WaveShare PiRacer Pro AI Kit** to compete in the **Chalmers Robot Folkrace competition**. The system is based on **OpenCV2**, **NumPy**, **Picamera2**, and **PiRacerPro** hardware drivers, with reserved expansion interfaces for **side infrared ranging/ultrasonic obstacle avoidance sensors**.
